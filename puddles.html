@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Muddy Puddles!</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #87CEEB; overflow: hidden; width: 100vw; height: 100vh; touch-action: none; }
+    canvas { display: block; position: fixed; top: 0; left: 0; }
+    #splash-text {
+      position: fixed;
+      top: 40%;
+      width: 100%;
+      text-align: center;
+      font-family: 'Arial Rounded MT Bold', Arial, sans-serif;
+      font-size: 4rem;
+      font-weight: 900;
+      color: #5C3A1E;
+      text-shadow: 3px 3px 0 #A0522D, -2px -2px 0 #fff;
+      pointer-events: none;
+      opacity: 0;
+      transform: scale(0.5) rotate(-8deg);
+      transition: none;
+    }
+    #score {
+      position: fixed;
+      top: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: 'Arial Rounded MT Bold', Arial, sans-serif;
+      font-size: 2rem;
+      color: white;
+      text-shadow: 2px 2px 0 #555;
+      pointer-events: none;
+    }
+    #hint {
+      position: fixed;
+      bottom: 30px;
+      width: 100%;
+      text-align: center;
+      font-family: 'Arial Rounded MT Bold', Arial, sans-serif;
+      font-size: 1.3rem;
+      color: rgba(255,255,255,0.85);
+      text-shadow: 1px 1px 0 #555;
+      pointer-events: none;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:.7} 50%{opacity:1} }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="splash-text">SPLASH!</div>
+<div id="score">💦 0</div>
+<div id="hint">TAP A PUDDLE!</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const splashEl = document.getElementById('splash-text');
+const scoreEl = document.getElementById('score');
+const hintEl = document.getElementById('hint');
+
+let W, H, GROUND, HILL1, HILL2;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  GROUND = H * 0.72;
+  HILL1 = H * 0.60;
+  HILL2 = H * 0.65;
+}
+resize();
+window.addEventListener('resize', resize);
+
+let audioCtx = null;
+function getAC() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+function playJump() {
+  try {
+    const ac = getAC(), now = ac.currentTime;
+    const osc = ac.createOscillator(), g = ac.createGain();
+    osc.connect(g); g.connect(ac.destination);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(300, now);
+    osc.frequency.exponentialRampToValueAtTime(600, now + 0.12);
+    g.gain.setValueAtTime(0.4, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+    osc.start(now); osc.stop(now + 0.2);
+  } catch(e){}
+}
+
+function playSplat(big) {
+  try {
+    const ac = getAC(), now = ac.currentTime;
+    const comp = ac.createDynamicsCompressor();
+    comp.threshold.value = -6; comp.ratio.value = 8;
+    comp.attack.value = 0.001; comp.release.value = 0.1;
+    comp.connect(ac.destination);
+
+    // Wet thud
+    const len = Math.floor(ac.sampleRate * 0.18);
+    const buf = ac.createBuffer(1, len, ac.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+      const e = Math.pow(1 - i/len, 3);
+      d[i] = (Math.random()*2-1) * e;
+    }
+    const src = ac.createBufferSource(); src.buffer = buf;
+    const lp = ac.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value = 600;
+    const g1 = ac.createGain();
+    src.connect(lp); lp.connect(g1); g1.connect(comp);
+    g1.gain.setValueAtTime(big ? 3.5 : 2.0, now);
+    src.start(now);
+
+    // Splashy high crack
+    const len2 = Math.floor(ac.sampleRate * 0.08);
+    const buf2 = ac.createBuffer(1, len2, ac.sampleRate);
+    const d2 = buf2.getChannelData(0);
+    for (let i = 0; i < len2; i++) {
+      d2[i] = (Math.random()*2-1) * Math.pow(1-i/len2, 8);
+    }
+    const src2 = ac.createBufferSource(); src2.buffer = buf2;
+    const bp = ac.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=3000; bp.Q.value=1;
+    const g2 = ac.createGain();
+    src2.connect(bp); bp.connect(g2); g2.connect(comp);
+    g2.gain.setValueAtTime(big ? 2.5 : 1.5, now);
+    src2.start(now);
+
+    // Oink!
+    const osc = ac.createOscillator(), og = ac.createGain();
+    osc.connect(og); og.connect(comp);
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(big ? 420 : 380, now + 0.1);
+    osc.frequency.setValueAtTime(big ? 500 : 450, now + 0.18);
+    osc.frequency.setValueAtTime(big ? 380 : 340, now + 0.25);
+    og.gain.setValueAtTime(0, now + 0.08);
+    og.gain.linearRampToValueAtTime(0.6, now + 0.12);
+    og.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+    osc.start(now + 0.08); osc.stop(now + 0.4);
+  } catch(e){}
+}
+
+// ── Clouds ─────────────────────────────────────────────────
+const clouds = [];
+for (let i = 0; i < 5; i++) {
+  clouds.push({
+    x: Math.random() * W,
+    y: 40 + Math.random() * (H * 0.2),
+    w: 80 + Math.random() * 120,
+    speed: 0.15 + Math.random() * 0.2
+  });
+}
+
+function drawCloud(x, y, w) {
+  const h = w * 0.45;
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.beginPath();
+  ctx.ellipse(x, y, w*0.5, h*0.45, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(x-w*0.22, y+h*0.1, w*0.32, h*0.35, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(x+w*0.22, y+h*0.1, w*0.32, h*0.35, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(x+w*0.38, y+h*0.2, w*0.22, h*0.28, 0, 0, Math.PI*2); ctx.fill();
+}
+
+// ── Puddles ────────────────────────────────────────────────
+const NUM_PUDDLES = 4;
+const puddles = [];
+
+function makePuddle(idx) {
+  const segment = W / NUM_PUDDLES;
+  return {
+    x: segment * idx + segment * 0.2 + Math.random() * segment * 0.6,
+    y: GROUND + 18,
+    rx: 38 + Math.random() * 30,
+    ry: 14 + Math.random() * 8,
+    dirty: 0,        // 0=clean, 1=muddy
+    ripple: 0,
+    active: true
+  };
+}
+
+for (let i = 0; i < NUM_PUDDLES; i++) puddles.push(makePuddle(i));
+
+function drawPuddle(p) {
+  const mud = p.dirty;
+  // Shadow
+  ctx.save();
+  ctx.globalAlpha = 0.18;
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.ellipse(p.x, p.y+4, p.rx+4, p.ry+2, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+
+  // Water/mud fill
+  const baseColor = mud > 0.5 ? '#8B5E3C' : '#5B9BD5';
+  const shineColor = mud > 0.5 ? '#A0784A' : '#89CFF0';
+  ctx.save();
+  ctx.beginPath();
+  ctx.ellipse(p.x, p.y, p.rx, p.ry, 0, 0, Math.PI*2);
+  ctx.clip();
+  const g = ctx.createLinearGradient(p.x, p.y-p.ry, p.x, p.y+p.ry);
+  g.addColorStop(0, shineColor);
+  g.addColorStop(1, baseColor);
+  ctx.fillStyle = g;
+  ctx.fillRect(p.x-p.rx-2, p.y-p.ry-2, p.rx*2+4, p.ry*2+4);
+  // Shine streak
+  if (mud < 0.5) {
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(p.x-p.rx*0.25, p.y-p.ry*0.3, p.rx*0.3, p.ry*0.25, -0.3, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Rim
+  ctx.beginPath();
+  ctx.ellipse(p.x, p.y, p.rx, p.ry, 0, 0, Math.PI*2);
+  ctx.strokeStyle = mud > 0.5 ? '#6B4226' : '#4A8BC4';
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  // Ripple
+  if (p.ripple > 0) {
+    ctx.save();
+    ctx.globalAlpha = p.ripple * 0.5;
+    ctx.beginPath();
+    ctx.ellipse(p.x, p.y, p.rx*(1.5+p.ripple*0.8), p.ry*(1.5+p.ripple*0.8), 0, 0, Math.PI*2);
+    ctx.strokeStyle = mud > 0.5 ? '#8B5E3C' : '#5B9BD5';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+    p.ripple -= 0.025;
+    if (p.ripple < 0) p.ripple = 0;
+  }
+}
+
+// ── Pig ───────────────────────────────────────────────────
+function drawPig(x, y, scale, facing, legPhase, squishY, squishX, mudLevel, happy) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(facing * scale, scale * squishY);
+  ctx.scale(squishX, 1);
+
+  const pink = '#F9AABB';
+  const darkPink = '#E8859A';
+  const snoutPink = '#F08098';
+
+  // Shadow
+  ctx.save();
+  ctx.scale(1, 1/squishY);
+  ctx.globalAlpha = 0.18;
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.ellipse(0, 52, 45*squishX, 10, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+
+  // Mud splats on pig if dirty
+  if (mudLevel > 0) {
+    ctx.save();
+    ctx.globalAlpha = mudLevel * 0.8;
+    ctx.fillStyle = '#8B5E3C';
+    ctx.beginPath(); ctx.ellipse(-10, 10, 12, 8, 0.4, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(15, -5, 8, 6, -0.3, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(-5, -20, 6, 5, 0.2, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  // Legs (behind body)
+  const legSwing = Math.sin(legPhase) * 12;
+  // Back legs
+  ctx.fillStyle = pink;
+  ctx.save(); ctx.rotate((legSwing * 0.015));
+  roundRect(ctx, -35, 28, 16, 30, 7); ctx.fill();
+  ctx.restore();
+  ctx.save(); ctx.rotate((-legSwing * 0.015));
+  roundRect(ctx, -10, 28, 16, 30, 7); ctx.fill();
+  ctx.restore();
+  // Shoes (back)
+  ctx.fillStyle = '#111';
+  ctx.beginPath(); ctx.ellipse(-27, 59, 12, 7, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-2, 59, 12, 7, 0, 0, Math.PI*2); ctx.fill();
+
+  // BODY — round oval
+  ctx.fillStyle = pink;
+  ctx.beginPath();
+  ctx.ellipse(0, 10, 42, 36, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // Dress
+  ctx.fillStyle = '#E63950';
+  ctx.beginPath();
+  ctx.ellipse(0, 28, 40, 24, 0, 0, Math.PI);
+  ctx.fill();
+  // Dress collar
+  ctx.fillStyle = '#FF6B7A';
+  ctx.beginPath();
+  ctx.ellipse(0, 5, 30, 8, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // Tail
+  ctx.strokeStyle = darkPink;
+  ctx.lineWidth = 5;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-40, -2);
+  ctx.bezierCurveTo(-60, -15, -65, 5, -52, 12);
+  ctx.bezierCurveTo(-45, 18, -50, 25, -42, 22);
+  ctx.stroke();
+
+  // Front legs (in front of body)
+  ctx.fillStyle = pink;
+  ctx.save(); ctx.rotate((-legSwing * 0.012));
+  roundRect(ctx, 16, 15, 14, 28, 6); ctx.fill();
+  ctx.restore();
+  ctx.save(); ctx.rotate((legSwing * 0.012));
+  roundRect(ctx, 34, 15, 14, 28, 6); ctx.fill();
+  ctx.restore();
+  // Shoes (front)
+  ctx.fillStyle = '#111';
+  ctx.beginPath(); ctx.ellipse(23, 44, 11, 7, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(41, 44, 11, 7, 0, 0, Math.PI*2); ctx.fill();
+
+  // HEAD — iconic Peppa-style circle + snout
+  ctx.fillStyle = pink;
+  ctx.beginPath();
+  ctx.arc(28, -22, 30, 0, Math.PI*2);
+  ctx.fill();
+
+  // Ears
+  ctx.fillStyle = pink;
+  ctx.beginPath(); ctx.ellipse(14, -46, 10, 14, -0.3, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(36, -48, 10, 14, 0.3, 0, Math.PI*2); ctx.fill();
+  // Inner ear
+  ctx.fillStyle = darkPink;
+  ctx.beginPath(); ctx.ellipse(14, -46, 6, 9, -0.3, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(36, -48, 6, 9, 0.3, 0, Math.PI*2); ctx.fill();
+
+  // Eyes — on top of head, Peppa style
+  const eyeY = happy ? -35 : -32;
+  const blink = happy ? 0.3 : 1;
+  ctx.fillStyle = 'white';
+  ctx.beginPath(); ctx.ellipse(18, eyeY, 9, 10*blink, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(36, eyeY, 9, 10*blink, 0, 0, Math.PI*2); ctx.fill();
+  // Pupils
+  ctx.fillStyle = '#222';
+  ctx.beginPath(); ctx.arc(20, eyeY + (happy?-2:0), 5, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(38, eyeY + (happy?-2:0), 5, 0, Math.PI*2); ctx.fill();
+  // Shine dots
+  ctx.fillStyle = 'white';
+  ctx.beginPath(); ctx.arc(22, eyeY-2 + (happy?-2:0), 2, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(40, eyeY-2 + (happy?-2:0), 2, 0, Math.PI*2); ctx.fill();
+
+  // Smile
+  ctx.strokeStyle = '#C0607A';
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  if (happy) {
+    ctx.arc(28, -16, 10, 0.1, Math.PI - 0.1);
+  } else {
+    ctx.arc(28, -12, 8, 0.2, Math.PI - 0.2);
+  }
+  ctx.stroke();
+
+  // Snout — the classic Peppa forward-sticking snout
+  ctx.fillStyle = snoutPink;
+  ctx.beginPath();
+  ctx.ellipse(55, -18, 14, 11, 0.1, 0, Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle = darkPink;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  // Nostrils
+  ctx.fillStyle = '#C0607A';
+  ctx.beginPath(); ctx.ellipse(51, -16, 3.5, 4, -0.2, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(59, -16, 3.5, 4, 0.2, 0, Math.PI*2); ctx.fill();
+
+  // Cheeks (blush)
+  ctx.save();
+  ctx.globalAlpha = 0.35;
+  ctx.fillStyle = '#E8507A';
+  ctx.beginPath(); ctx.ellipse(12, -18, 8, 5, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(44, -18, 8, 5, 0, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  ctx.restore();
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.lineTo(x+w-r, y);
+  ctx.quadraticCurveTo(x+w, y, x+w, y+r);
+  ctx.lineTo(x+w, y+h-r);
+  ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+  ctx.lineTo(x+r, y+h);
+  ctx.quadraticCurveTo(x, y+h, x, y+h-r);
+  ctx.lineTo(x, y+r);
+  ctx.quadraticCurveTo(x, y, x+r, y);
+  ctx.closePath();
+}
+
+// ── Mud particles ─────────────────────────────────────────
+const mudParts = [];
+function spawnMud(x, y, big) {
+  const n = big ? 28 : 16;
+  for (let i = 0; i < n; i++) {
+    const angle = -Math.PI - Math.random() * Math.PI; // upward arc
+    const spd = big ? (3+Math.random()*9) : (2+Math.random()*5);
+    mudParts.push({
+      x, y,
+      vx: Math.cos(angle)*spd,
+      vy: Math.sin(angle)*spd - 2,
+      r: big ? (4+Math.random()*7) : (2+Math.random()*5),
+      color: Math.random()>0.5 ? '#8B5E3C' : '#6B4226',
+      alpha: 1,
+      spin: (Math.random()-0.5)*0.3
+    });
+  }
+  // Water droplets
+  for (let i = 0; i < (big?12:6); i++) {
+    const angle = -Math.PI*0.5 + (Math.random()-0.5)*Math.PI*1.2;
+    const spd = big ? (5+Math.random()*8) : (3+Math.random()*5);
+    mudParts.push({
+      x, y,
+      vx: Math.cos(angle)*spd,
+      vy: Math.sin(angle)*spd,
+      r: 2+Math.random()*3,
+      color: '#89CFF0',
+      alpha: 1,
+      spin: 0
+    });
+  }
+}
+
+// ── Pig state ─────────────────────────────────────────────
+const pig = {
+  x: 120, y: GROUND,
+  vx: 0, vy: 0,
+  state: 'idle',   // idle | running | jumping | happy
+  facing: 1,
+  legPhase: 0,
+  squishY: 1, squishX: 1,
+  targetX: 0, targetPuddle: null,
+  mudLevel: 0,
+  happyTimer: 0,
+  idleTimer: 0,
+  scale: 1
+};
+
+let score = 0;
+let splashTimer = 0;
+const splashWords = ['SPLASH!','WHEEE!','OINK!','YAY!','SO MUDDY!'];
+let splashWord = 'SPLASH!';
+
+function showSplash(word) {
+  splashWord = word;
+  splashEl.textContent = word;
+  splashEl.style.transition = 'none';
+  splashEl.style.opacity = '1';
+  splashEl.style.transform = 'scale(1.2) rotate(-5deg)';
+  splashTimer = 80;
+}
+
+// ── Input ─────────────────────────────────────────────────
+function handleTap(px, py) {
+  // Find closest puddle to tap
+  let best = null, bestD = 999999;
+  puddles.forEach(p => {
+    if (!p.active) return;
+    const dx = px - p.x, dy = py - p.y;
+    const d = Math.sqrt(dx*dx+dy*dy);
+    if (d < bestD) { bestD = d; best = p; }
+  });
+  if (!best || bestD > 180) return;
+  if (pig.state === 'jumping') return;
+
+  pig.targetX = best.x - 20;
+  pig.targetPuddle = best;
+  pig.facing = best.x > pig.x ? 1 : -1;
+  pig.state = 'running';
+  playJump();
+  hintEl.style.opacity = '0';
+}
+
+canvas.addEventListener('click', e => handleTap(e.clientX, e.clientY));
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  handleTap(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+}, { passive: false });
+
+// ── Background drawing ────────────────────────────────────
+function drawBackground() {
+  // Sky gradient
+  const sky = ctx.createLinearGradient(0, 0, 0, GROUND);
+  sky.addColorStop(0, '#87CEEB');
+  sky.addColorStop(1, '#C9E8F5');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  // Sun
+  ctx.save();
+  ctx.fillStyle = '#FFE566';
+  ctx.shadowColor = '#FFD700';
+  ctx.shadowBlur = 30;
+  ctx.beginPath();
+  ctx.arc(W*0.88, H*0.1, 45, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+  // Sun rays
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,220,80,0.5)';
+  ctx.lineWidth = 4;
+  for (let i = 0; i < 8; i++) {
+    const a = (Math.PI*2/8)*i;
+    ctx.beginPath();
+    ctx.moveTo(W*0.88+Math.cos(a)*50, H*0.1+Math.sin(a)*50);
+    ctx.lineTo(W*0.88+Math.cos(a)*70, H*0.1+Math.sin(a)*70);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Far hill
+  ctx.fillStyle = '#7EC850';
+  ctx.beginPath();
+  ctx.moveTo(-10, H);
+  ctx.lineTo(-10, HILL1);
+  ctx.bezierCurveTo(W*0.1, HILL1-80, W*0.3, HILL1-120, W*0.5, HILL1-30);
+  ctx.bezierCurveTo(W*0.65, HILL1+20, W*0.8, HILL1-60, W*1.1, HILL1-10);
+  ctx.lineTo(W*1.1, H);
+  ctx.closePath();
+  ctx.fill();
+
+  // Near hill
+  ctx.fillStyle = '#5DAD32';
+  ctx.beginPath();
+  ctx.moveTo(-10, H);
+  ctx.lineTo(-10, HILL2);
+  ctx.bezierCurveTo(W*0.15, HILL2-60, W*0.35, HILL2-90, W*0.55, HILL2-20);
+  ctx.bezierCurveTo(W*0.7, HILL2+15, W*0.85, HILL2-50, W*1.1, HILL2-5);
+  ctx.lineTo(W*1.1, H);
+  ctx.closePath();
+  ctx.fill();
+
+  // Ground
+  ctx.fillStyle = '#4CAF32';
+  ctx.beginPath();
+  ctx.rect(0, GROUND, W, H - GROUND);
+  ctx.fill();
+  // Ground shine strip
+  ctx.fillStyle = '#5DBF3D';
+  ctx.fillRect(0, GROUND, W, 8);
+
+  // Clouds
+  clouds.forEach(cl => {
+    cl.x += cl.speed;
+    if (cl.x - cl.w > W) cl.x = -cl.w;
+    drawCloud(cl.x, cl.y, cl.w);
+  });
+
+  // Little house in background
+  drawHouse(W*0.15, HILL2 - 10);
+}
+
+function drawHouse(x, y) {
+  const s = 0.55;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(s, s);
+  // Walls
+  ctx.fillStyle = '#FFFBE6';
+  ctx.fillRect(-40, -50, 80, 55);
+  // Roof
+  ctx.fillStyle = '#E84040';
+  ctx.beginPath();
+  ctx.moveTo(-50, -50);
+  ctx.lineTo(0, -95);
+  ctx.lineTo(50, -50);
+  ctx.closePath();
+  ctx.fill();
+  // Door
+  ctx.fillStyle = '#8B5E3C';
+  ctx.fillRect(-12, -18, 24, 23);
+  // Window
+  ctx.fillStyle = '#AAE4FF';
+  ctx.fillRect(16, -38, 18, 15);
+  ctx.strokeStyle = '#888';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(16, -38, 18, 15);
+  ctx.restore();
+}
+
+// ── Main loop ─────────────────────────────────────────────
+let frame = 0;
+
+function update() {
+  frame++;
+
+  // Sync ground in case of resize
+  pig.y = Math.min(pig.y, GROUND);
+
+  if (pig.state === 'running') {
+    const dx = pig.targetX - pig.x;
+    const dist = Math.abs(dx);
+    pig.vx = pig.facing * Math.min(6, dist * 0.18 + 2);
+    pig.x += pig.vx;
+    pig.legPhase += 0.28;
+    pig.squishY = 1 + Math.sin(pig.legPhase*2)*0.04;
+
+    if (dist < 8) {
+      // Jump!
+      pig.state = 'jumping';
+      pig.vy = -16;
+      pig.vx = pig.facing * 3;
+      pig.squishY = 0.75;
+      pig.squishX = 1.2;
+    }
+  }
+
+  if (pig.state === 'jumping') {
+    pig.x += pig.vx;
+    pig.y += pig.vy;
+    pig.vy += 0.72; // gravity
+    pig.vx *= 0.97;
+    pig.squishY += (1 - pig.squishY) * 0.15;
+    pig.squishX += (1 - pig.squishX) * 0.15;
+    pig.legPhase += 0.15;
+
+    if (pig.y >= GROUND) {
+      pig.y = GROUND;
+      pig.vy = 0;
+      pig.vx = 0;
+      pig.state = 'happy';
+      pig.happyTimer = 90;
+      pig.squishY = 0.6;
+      pig.squishX = 1.35;
+
+      // Splash!
+      const p = pig.targetPuddle;
+      if (p) {
+        p.dirty = 1;
+        p.ripple = 1;
+        spawnMud(p.x, p.y, true);
+        pig.mudLevel = Math.min(1, pig.mudLevel + 0.5);
+        score++;
+        scoreEl.textContent = '💦 ' + score;
+        playSplat(true);
+        showSplash(splashWords[Math.floor(Math.random()*splashWords.length)]);
+        // Replace puddle after a bit
+        setTimeout(() => {
+          p.dirty = 0;
+          p.rx = 38 + Math.random()*30;
+          p.ry = 14 + Math.random()*8;
+          // Move to new spot
+          const idx = puddles.indexOf(p);
+          const seg = W / NUM_PUDDLES;
+          p.x = seg*idx + seg*0.2 + Math.random()*seg*0.6;
+        }, 3000);
+      }
+    }
+  }
+
+  if (pig.state === 'happy') {
+    pig.happyTimer--;
+    pig.legPhase += 0.2;
+    pig.squishY += (1 - pig.squishY) * 0.1;
+    pig.squishX += (1 - pig.squishX) * 0.1;
+    // Little excited hops
+    if (pig.happyTimer === 60) { pig.squishY = 0.7; pig.squishX = 1.25; }
+    if (pig.happyTimer === 40) { pig.squishY = 0.8; pig.squishX = 1.15; }
+    if (pig.happyTimer <= 0) { pig.state = 'idle'; }
+  }
+
+  if (pig.state === 'idle') {
+    pig.idleTimer++;
+    pig.squishY += (1 - pig.squishY) * 0.12;
+    pig.squishX += (1 - pig.squishX) * 0.12;
+    // Idle breathing bob
+    pig.squishY = 1 + Math.sin(frame*0.04)*0.02;
+  }
+
+  // Mud fades slowly
+  pig.mudLevel = Math.max(0, pig.mudLevel - 0.0008);
+
+  // Mud particles
+  for (let i = mudParts.length-1; i >= 0; i--) {
+    const m = mudParts[i];
+    m.x += m.vx; m.y += m.vy;
+    m.vy += 0.45;
+    m.vx *= 0.97;
+    m.alpha -= 0.022;
+    if (m.alpha <= 0) { mudParts.splice(i,1); continue; }
+    if (m.y > GROUND+20) { mudParts.splice(i,1); continue; }
+  }
+
+  // Splash text
+  if (splashTimer > 0) {
+    splashTimer--;
+    if (splashTimer < 20) {
+      const a = splashTimer/20;
+      splashEl.style.opacity = a;
+      splashEl.style.transform = `scale(${0.8+a*0.4}) rotate(${-5*a}deg)`;
+    }
+  }
+}
+
+function drawMudParticles() {
+  mudParts.forEach(m => {
+    ctx.save();
+    ctx.globalAlpha = m.alpha;
+    ctx.fillStyle = m.color;
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, m.r, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  });
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  drawBackground();
+  puddles.forEach(drawPuddle);
+  drawMudParticles();
+
+  const isHappy = pig.state === 'happy';
+  drawPig(
+    pig.x, pig.y,
+    (W < 500 ? 0.85 : 1.0),
+    pig.facing,
+    pig.legPhase,
+    pig.squishY, pig.squishX,
+    pig.mudLevel,
+    isHappy
+  );
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
