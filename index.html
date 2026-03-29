@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Magic Fireworks!</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0a0a1a;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+      cursor: none;
+      font-family: 'Arial Rounded MT Bold', Arial, sans-serif;
+      touch-action: none;
+    }
+
+    canvas {
+      display: block;
+      position: fixed;
+      top: 0; left: 0;
+    }
+
+    #hint {
+      position: fixed;
+      bottom: 40px;
+      width: 100%;
+      text-align: center;
+      color: rgba(255,255,255,0.4);
+      font-size: 1.4rem;
+      pointer-events: none;
+      animation: pulse 2s infinite;
+      letter-spacing: 2px;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 0.9; }
+    }
+
+    #score {
+      position: fixed;
+      top: 20px;
+      width: 100%;
+      text-align: center;
+      color: rgba(255,255,255,0.7);
+      font-size: 2.5rem;
+      pointer-events: none;
+      text-shadow: 0 0 20px rgba(255,255,100,0.8);
+      transition: transform 0.1s;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="hint">TAP ANYWHERE ✨</div>
+  <div id="score">🎆 0</div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const hint = document.getElementById('hint');
+    const scoreEl = document.getElementById('score');
+
+    let W = canvas.width = window.innerWidth;
+    let H = canvas.height = window.innerHeight;
+    let particles = [];
+    let stars = [];
+    let count = 0;
+    let audioCtx = null;
+
+    window.addEventListener('resize', () => {
+      W = canvas.width = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+      makeStars();
+    });
+
+    function getAudio() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      return audioCtx;
+    }
+
+    function playBoom(x, y) {
+      try {
+        const ac = getAudio();
+        const osc1 = ac.createOscillator();
+        const gain1 = ac.createGain();
+        osc1.connect(gain1); gain1.connect(ac.destination);
+        osc1.frequency.setValueAtTime(200, ac.currentTime);
+        osc1.frequency.exponentialRampToValueAtTime(800, ac.currentTime + 0.15);
+        gain1.gain.setValueAtTime(0.3, ac.currentTime);
+        gain1.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.15);
+        osc1.start(ac.currentTime); osc1.stop(ac.currentTime + 0.15);
+
+        const bufSize = ac.sampleRate * 0.08;
+        const buf = ac.createBuffer(1, bufSize, ac.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufSize, 3);
+        const src = ac.createBufferSource();
+        src.buffer = buf;
+        const gain2 = ac.createGain();
+        src.connect(gain2); gain2.connect(ac.destination);
+        gain2.gain.setValueAtTime(0.6, ac.currentTime + 0.1);
+        gain2.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.3);
+        src.start(ac.currentTime + 0.1);
+      } catch(e) {}
+    }
+
+    function makeStars() {
+      stars = [];
+      for (let i = 0; i < 120; i++) {
+        stars.push({
+          x: Math.random() * W,
+          y: Math.random() * H,
+          r: Math.random() * 1.5 + 0.3,
+          alpha: Math.random(),
+          speed: Math.random() * 0.02 + 0.005
+        });
+      }
+    }
+    makeStars();
+
+    const COLORS = [
+      '#ff4466','#ff6644','#ffcc00','#44ff66',
+      '#44ccff','#aa44ff','#ff44cc','#ffffff',
+      '#ff8800','#00ffcc','#ff0088','#88ff00'
+    ];
+
+    function spawnFirework(x, y) {
+      count++;
+      scoreEl.textContent = '🎆 ' + count;
+      scoreEl.style.transform = 'scale(1.3)';
+      setTimeout(() => scoreEl.style.transform = 'scale(1)', 150);
+
+      if (count === 1) hint.style.opacity = '0';
+
+      playBoom(x, y);
+
+      const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+      const color2 = COLORS[Math.floor(Math.random() * COLORS.length)];
+      const n = 60 + Math.floor(Math.random() * 40);
+
+      for (let i = 0; i < n; i++) {
+        const angle = (Math.PI * 2 * i) / n + Math.random() * 0.3;
+        const speed = 2 + Math.random() * 7;
+        const c = Math.random() > 0.5 ? color : color2;
+        particles.push({
+          x, y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed - Math.random() * 2,
+          r: Math.random() * 4 + 2,
+          color: c,
+          alpha: 1,
+          decay: 0.012 + Math.random() * 0.015,
+          gravity: 0.12 + Math.random() * 0.08,
+          trail: [],
+          shape: Math.random() > 0.7 ? 'star' : 'circle'
+        });
+      }
+
+      for (let i = 0; i < 20; i++) {
+        const angle = (Math.PI * 2 * i) / 20;
+        particles.push({
+          x, y,
+          vx: Math.cos(angle) * (1 + Math.random()),
+          vy: Math.sin(angle) * (1 + Math.random()),
+          r: 2,
+          color: '#ffffff',
+          alpha: 1,
+          decay: 0.03,
+          gravity: 0,
+          trail: [],
+          shape: 'circle'
+        });
+      }
+    }
+
+    function drawStar(ctx, x, y, r, color, alpha) {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = color;
+      ctx.translate(x, y);
+      ctx.beginPath();
+      for (let i = 0; i < 5; i++) {
+        const a = (Math.PI * 2 * i) / 5 - Math.PI / 2;
+        const a2 = a + Math.PI / 5;
+        if (i === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+        else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+        ctx.lineTo(Math.cos(a2) * r * 0.4, Math.sin(a2) * r * 0.4);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function draw() {
+      ctx.fillStyle = 'rgba(10, 10, 26, 0.18)';
+      ctx.fillRect(0, 0, W, H);
+
+      stars.forEach(s => {
+        s.alpha += s.speed * (Math.random() > 0.5 ? 1 : -1);
+        s.alpha = Math.max(0.1, Math.min(1, s.alpha));
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,${s.alpha})`;
+        ctx.fill();
+      });
+
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.trail.push({ x: p.x, y: p.y, alpha: p.alpha });
+        if (p.trail.length > 6) p.trail.shift();
+
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += p.gravity;
+        p.vx *= 0.97;
+        p.alpha -= p.decay;
+
+        if (p.alpha <= 0) { particles.splice(i, 1); continue; }
+
+        p.trail.forEach((t, ti) => {
+          const ta = t.alpha * (ti / p.trail.length) * 0.4;
+          ctx.beginPath();
+          ctx.arc(t.x, t.y, p.r * 0.5, 0, Math.PI * 2);
+          ctx.fillStyle = p.color;
+          ctx.globalAlpha = ta;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        });
+
+        if (p.shape === 'star') {
+          drawStar(ctx, p.x, p.y, p.r * 1.5, p.color, p.alpha);
+        } else {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+          ctx.fillStyle = p.color;
+          ctx.globalAlpha = p.alpha;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r * 2.5, 0, Math.PI * 2);
+        const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r * 2.5);
+        grad.addColorStop(0, p.color + '88');
+        grad.addColorStop(1, 'transparent');
+        ctx.fillStyle = grad;
+        ctx.globalAlpha = p.alpha * 0.5;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+
+      requestAnimationFrame(draw);
+    }
+
+    function handleTap(x, y) {
+      spawnFirework(x, y);
+    }
+
+    canvas.addEventListener('click', e => handleTap(e.clientX, e.clientY));
+    canvas.addEventListener('touchstart', e => {
+      e.preventDefault();
+      Array.from(e.changedTouches).forEach(t => handleTap(t.clientX, t.clientY));
+    }, { passive: false });
+
+    canvas.addEventListener('touchmove', e => {
+      e.preventDefault();
+      if (Math.random() > 0.6) {
+        const t = e.changedTouches[0];
+        handleTap(t.clientX, t.clientY);
+      }
+    }, { passive: false });
+
+    draw();
+
+    setTimeout(() => spawnFirework(W/2, H/2), 600);
+    setTimeout(() => spawnFirework(W*0.3, H*0.4), 1100);
+    setTimeout(() => spawnFirework(W*0.7, H*0.35), 1600);
+  </script>
+</body>
+</html>
