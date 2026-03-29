@@ -88,28 +88,82 @@
     function playBoom(x, y) {
       try {
         const ac = getAudio();
-        // Whoosh up
-        const osc1 = ac.createOscillator();
-        const gain1 = ac.createGain();
-        osc1.connect(gain1); gain1.connect(ac.destination);
-        osc1.frequency.setValueAtTime(200, ac.currentTime);
-        osc1.frequency.exponentialRampToValueAtTime(800, ac.currentTime + 0.15);
-        gain1.gain.setValueAtTime(0.3, ac.currentTime);
-        gain1.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.15);
-        osc1.start(ac.currentTime); osc1.stop(ac.currentTime + 0.15);
+        const now = ac.currentTime;
 
-        // Pop burst
-        const bufSize = ac.sampleRate * 0.08;
-        const buf = ac.createBuffer(1, bufSize, ac.sampleRate);
-        const data = buf.getChannelData(0);
-        for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufSize, 3);
-        const src = ac.createBufferSource();
-        src.buffer = buf;
-        const gain2 = ac.createGain();
-        src.connect(gain2); gain2.connect(ac.destination);
-        gain2.gain.setValueAtTime(0.6, ac.currentTime + 0.1);
-        gain2.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.3);
-        src.start(ac.currentTime + 0.1);
+        // Compressor to keep everything loud without clipping
+        const comp = ac.createDynamicsCompressor();
+        comp.threshold.value = -6;
+        comp.knee.value = 3;
+        comp.ratio.value = 4;
+        comp.attack.value = 0.001;
+        comp.release.value = 0.1;
+        comp.connect(ac.destination);
+
+        // 1. Deep bass THUD - the main boom (like a kick drum)
+        const bassOsc = ac.createOscillator();
+        const bassGain = ac.createGain();
+        bassOsc.connect(bassGain);
+        bassGain.connect(comp);
+        bassOsc.type = 'sine';
+        bassOsc.frequency.setValueAtTime(160, now);
+        bassOsc.frequency.exponentialRampToValueAtTime(30, now + 0.35);
+        bassGain.gain.setValueAtTime(3.0, now);
+        bassGain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+        bassOsc.start(now);
+        bassOsc.stop(now + 0.5);
+
+        // 2. Mid body - noise through lowpass for the "whomp"
+        const bodyBuf = ac.createBuffer(1, ac.sampleRate * 0.4, ac.sampleRate);
+        const bodyData = bodyBuf.getChannelData(0);
+        for (let i = 0; i < bodyData.length; i++) bodyData[i] = Math.random() * 2 - 1;
+        const bodySrc = ac.createBufferSource();
+        bodySrc.buffer = bodyBuf;
+        const bodyLp = ac.createBiquadFilter();
+        bodyLp.type = 'lowpass';
+        bodyLp.frequency.value = 400;
+        const bodyGain = ac.createGain();
+        bodySrc.connect(bodyLp);
+        bodyLp.connect(bodyGain);
+        bodyGain.connect(comp);
+        bodyGain.gain.setValueAtTime(2.5, now);
+        bodyGain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+        bodySrc.start(now);
+
+        // 3. Crackle - noise through highpass for sparkly tail
+        const crackBuf = ac.createBuffer(1, ac.sampleRate * 0.6, ac.sampleRate);
+        const crackData = crackBuf.getChannelData(0);
+        for (let i = 0; i < crackData.length; i++) {
+          crackData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / crackData.length, 1.2);
+        }
+        const crackSrc = ac.createBufferSource();
+        crackSrc.buffer = crackBuf;
+        const crackHp = ac.createBiquadFilter();
+        crackHp.type = 'bandpass';
+        crackHp.frequency.value = 3000;
+        crackHp.Q.value = 0.5;
+        const crackGain = ac.createGain();
+        crackSrc.connect(crackHp);
+        crackHp.connect(crackGain);
+        crackGain.connect(comp);
+        crackGain.gain.setValueAtTime(1.5, now + 0.06);
+        crackGain.gain.exponentialRampToValueAtTime(0.001, now + 0.7);
+        crackSrc.start(now + 0.06);
+
+        // 4. Random musical sparkle note — makes each explosion feel unique
+        const notes = [261, 329, 392, 440, 523, 659, 784];
+        const freq = notes[Math.floor(Math.random() * notes.length)];
+        const sparkOsc = ac.createOscillator();
+        const sparkGain = ac.createGain();
+        sparkOsc.connect(sparkGain);
+        sparkGain.connect(comp);
+        sparkOsc.type = 'triangle';
+        sparkOsc.frequency.setValueAtTime(freq * 2, now + 0.05);
+        sparkOsc.frequency.exponentialRampToValueAtTime(freq, now + 0.2);
+        sparkGain.gain.setValueAtTime(0.8, now + 0.05);
+        sparkGain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+        sparkOsc.start(now + 0.05);
+        sparkOsc.stop(now + 0.4);
+
       } catch(e) {}
     }
 
