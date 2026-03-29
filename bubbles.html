@@ -96,75 +96,70 @@
         const ac = getAudio();
         const now = ac.currentTime;
 
-        // Master compressor — keeps it loud and punchy without clipping
+        // Fast limiter — preserves the sharp transient, just prevents clipping
         const comp = ac.createDynamicsCompressor();
-        comp.threshold.value = -2;
-        comp.knee.value = 1;
-        comp.ratio.value = 8;
-        comp.attack.value = 0.0001;
-        comp.release.value = 0.04;
+        comp.threshold.value = -3;
+        comp.knee.value = 0;
+        comp.ratio.value = 20;
+        comp.attack.value = 0.00001; // near-zero — don't kill the crack
+        comp.release.value = 0.015;
         comp.connect(ac.destination);
 
-        // ── Layer 1: The SNAP — crisp plastic crack ──
-        // Very short, sharp noise burst shaped like bubble wrap
-        const snapLen = Math.floor(ac.sampleRate * 0.025); // 25ms
-        const snapBuf = ac.createBuffer(1, snapLen, ac.sampleRate);
-        const snapData = snapBuf.getChannelData(0);
-        for (let i = 0; i < snapLen; i++) {
-          // Envelope: instant attack, very steep decay
-          const env = Math.pow(1 - i / snapLen, 6);
-          snapData[i] = (Math.random() * 2 - 1) * env;
+        // ── THE CRACK ──
+        // Bubble wrap is a membrane snapping. 15ms, brutal decay, NO low end.
+        const crackLen = Math.floor(ac.sampleRate * 0.015); // 15ms only
+        const crackBuf = ac.createBuffer(1, crackLen, ac.sampleRate);
+        const crackData = crackBuf.getChannelData(0);
+        for (let i = 0; i < crackLen; i++) {
+          const env = Math.pow(1 - i / crackLen, 12); // very steep — snap not sustain
+          crackData[i] = (Math.random() * 2 - 1) * env;
         }
-        const snapSrc = ac.createBufferSource();
-        snapSrc.buffer = snapBuf;
+        const crackSrc = ac.createBufferSource();
+        crackSrc.buffer = crackBuf;
 
-        // Bandpass: emphasise the crisp 3–7kHz crack
-        const snapBp = ac.createBiquadFilter();
-        snapBp.type = 'bandpass';
-        snapBp.frequency.value = Math.max(2500, 6000 - radius * 25); // bigger = lower
-        snapBp.Q.value = 0.8;
+        // Highpass at 1.2kHz — cuts ALL the mud and silencer-ness
+        const hp = ac.createBiquadFilter();
+        hp.type = 'highpass';
+        hp.frequency.value = 1200;
+        hp.Q.value = 0.5;
 
-        const snapGain = ac.createGain();
-        snapSrc.connect(snapBp);
-        snapBp.connect(snapGain);
-        snapGain.connect(comp);
-        snapGain.gain.setValueAtTime(5.0, now);
-        snapSrc.start(now);
+        // Bell boost at 3.5kHz — the "snap" sweet spot for plastic cracking
+        const snap = ac.createBiquadFilter();
+        snap.type = 'peaking';
+        snap.frequency.value = Math.max(2500, 4000 - radius * 15);
+        snap.gain.value = 10;
+        snap.Q.value = 1.2;
 
-        // ── Layer 2: The THUMP — air pressure release ──
-        // Small low-freq pop (like air escaping)
-        const thumpOsc = ac.createOscillator();
-        const thumpGain = ac.createGain();
-        thumpOsc.connect(thumpGain);
-        thumpGain.connect(comp);
-        thumpOsc.type = 'sine';
-        const baseFreq = Math.max(60, 220 - radius * 1.5);
-        thumpOsc.frequency.setValueAtTime(baseFreq * 1.8, now);
-        thumpOsc.frequency.exponentialRampToValueAtTime(baseFreq * 0.4, now + 0.06);
-        thumpGain.gain.setValueAtTime(2.5, now);
-        thumpGain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
-        thumpOsc.start(now);
-        thumpOsc.stop(now + 0.08);
+        const crackGain = ac.createGain();
+        crackSrc.connect(hp);
+        hp.connect(snap);
+        snap.connect(crackGain);
+        crackGain.connect(comp);
+        crackGain.gain.setValueAtTime(6.0, now);
+        crackSrc.start(now);
 
-        // ── Layer 3: High fizz — the satisfying tail ──
-        const fizzLen = Math.floor(ac.sampleRate * 0.06);
-        const fizzBuf = ac.createBuffer(1, fizzLen, ac.sampleRate);
-        const fizzData = fizzBuf.getChannelData(0);
-        for (let i = 0; i < fizzLen; i++) {
-          const env = Math.pow(1 - i / fizzLen, 2);
-          fizzData[i] = (Math.random() * 2 - 1) * env;
+        // ── TINY AIR PUFF ──
+        // Just a whisper of mid-range body — bubble wrap has a tiny "pff" of air
+        // Keep this very quiet or it turns into a silencer again
+        const airLen = Math.floor(ac.sampleRate * 0.022);
+        const airBuf = ac.createBuffer(1, airLen, ac.sampleRate);
+        const airData = airBuf.getChannelData(0);
+        for (let i = 0; i < airLen; i++) {
+          const env = Math.pow(1 - i / airLen, 5);
+          airData[i] = (Math.random() * 2 - 1) * env;
         }
-        const fizzSrc = ac.createBufferSource();
-        fizzSrc.buffer = fizzBuf;
-        const fizzHp = ac.createBiquadFilter();
-        fizzHp.type = 'highpass';
-        fizzHp.frequency.value = 8000;
-        const fizzGain = ac.createGain();
-        fizzSrc.connect(fizzHp);
-        fizzHp.connect(fizzGain);
-        fizzGain.connect(comp);
-        fizzGain.gain.setValueAtTime(1.2, now + 0.01);
-        fizzSrc.start(now + 0.01);
+        const airSrc = ac.createBufferSource();
+        airSrc.buffer = airBuf;
+        const airBp = ac.createBiquadFilter();
+        airBp.type = 'bandpass';
+        airBp.frequency.value = 900;
+        airBp.Q.value = 2.5;
+        const airGain = ac.createGain();
+        airSrc.connect(airBp);
+        airBp.connect(airGain);
+        airGain.connect(comp);
+        airGain.gain.setValueAtTime(0.8, now); // quiet — supporting role only
+        airSrc.start(now);
 
       } catch(e) {}
     }
