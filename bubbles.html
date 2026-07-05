@@ -94,51 +94,48 @@
         const ac = getAudio();
         const now = ac.currentTime;
 
-        // Fast limiter — preserves the sharp transient, just prevents clipping
         const comp = ac.createDynamicsCompressor();
         comp.threshold.value = -3;
-        comp.knee.value = 0;
-        comp.ratio.value = 20;
-        comp.attack.value = 0.00001; // near-zero — don't kill the crack
-        comp.release.value = 0.015;
+        comp.knee.value = 3;
+        comp.ratio.value = 12;
+        comp.attack.value = 0.001;
+        comp.release.value = 0.02;
         comp.connect(ac.destination);
 
-        // ── THE CRACK ──
-        // Bubble wrap is a membrane snapping. 15ms, brutal decay, NO low end.
-        const crackLen = Math.floor(ac.sampleRate * 0.015); // 15ms only
+        // ── CRACK ──
+        const crackLen = Math.floor(ac.sampleRate * 0.035);
         const crackBuf = ac.createBuffer(1, crackLen, ac.sampleRate);
         const crackData = crackBuf.getChannelData(0);
         for (let i = 0; i < crackLen; i++) {
-          const env = Math.pow(1 - i / crackLen, 12); // very steep — snap not sustain
+          const env = Math.pow(1 - i / crackLen, 12);
           crackData[i] = (Math.random() * 2 - 1) * env;
         }
         const crackSrc = ac.createBufferSource();
         crackSrc.buffer = crackBuf;
 
-        // Highpass at 1.2kHz — cuts ALL the mud and silencer-ness
-        const hp = ac.createBiquadFilter();
-        hp.type = 'highpass';
-        hp.frequency.value = 1200;
-        hp.Q.value = 0.5;
+        // hp1: remove mud below 1.2kHz
+        const hp1 = ac.createBiquadFilter();
+        hp1.type = 'highpass';
+        hp1.frequency.value = 1200;
+        hp1.Q.value = 0.5;
 
-        // Bell boost at 3.5kHz — the "snap" sweet spot for plastic cracking
-        const snap = ac.createBiquadFilter();
-        snap.type = 'peaking';
-        snap.frequency.value = Math.max(2500, 4000 - radius * 15);
-        snap.gain.value = 10;
-        snap.Q.value = 1.2;
+        // hp2: resonant highpass — high Q creates a natural boost peak at cutoff
+        // This achieves the same "snap" emphasis as a peaking filter but is iOS-safe
+        const snapFreq = Math.max(2500, 4000 - radius * 15);
+        const hp2 = ac.createBiquadFilter();
+        hp2.type = 'highpass';
+        hp2.frequency.value = snapFreq;
+        hp2.Q.value = 3.5;
 
         const crackGain = ac.createGain();
-        crackSrc.connect(hp);
-        hp.connect(snap);
-        snap.connect(crackGain);
+        crackSrc.connect(hp1);
+        hp1.connect(hp2);
+        hp2.connect(crackGain);
         crackGain.connect(comp);
-        crackGain.gain.setValueAtTime(6.0, now);
+        crackGain.gain.setValueAtTime(10.0, now);
         crackSrc.start(now);
 
-        // ── TINY AIR PUFF ──
-        // Just a whisper of mid-range body — bubble wrap has a tiny "pff" of air
-        // Keep this very quiet or it turns into a silencer again
+        // ── AIR PUFF ──
         const airLen = Math.floor(ac.sampleRate * 0.022);
         const airBuf = ac.createBuffer(1, airLen, ac.sampleRate);
         const airData = airBuf.getChannelData(0);
@@ -156,7 +153,7 @@
         airSrc.connect(airBp);
         airBp.connect(airGain);
         airGain.connect(comp);
-        airGain.gain.setValueAtTime(0.8, now); // quiet — supporting role only
+        airGain.gain.setValueAtTime(1.5, now);
         airSrc.start(now);
 
       } catch(e) {}
