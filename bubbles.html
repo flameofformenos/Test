@@ -93,68 +93,47 @@
       try {
         const ac = getAudio();
         const now = ac.currentTime;
+        const sr = ac.sampleRate;
 
-        const comp = ac.createDynamicsCompressor();
-        comp.threshold.value = -3;
-        comp.knee.value = 3;
-        comp.ratio.value = 12;
-        comp.attack.value = 0.001;
-        comp.release.value = 0.02;
-        comp.connect(ac.destination);
+        const out = ac.createGain();
+        out.connect(ac.destination);
+        out.gain.setValueAtTime(0.7, now);
 
-        // ── CRACK ──
-        const crackLen = Math.floor(ac.sampleRate * 0.035);
-        const crackBuf = ac.createBuffer(1, crackLen, ac.sampleRate);
+        // ── OSCILLATOR POP TONE ──
+        // Pitch-drop sine — same technique as fireworks sparkle, guaranteed on iOS
+        const osc = ac.createOscillator();
+        const oscEnv = ac.createGain();
+        osc.connect(oscEnv);
+        oscEnv.connect(out);
+        const popFreq = Math.max(180, 420 - radius * 3);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(popFreq * 2.5, now);
+        osc.frequency.exponentialRampToValueAtTime(popFreq, now + 0.055);
+        oscEnv.gain.setValueAtTime(0.9, now);
+        oscEnv.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+        osc.start(now);
+        osc.stop(now + 0.1);
+
+        // ── NOISE CRACK ──
+        // 100ms buffer, single highpass — longer buffers work more reliably on iOS
+        const crackLen = Math.floor(sr * 0.1);
+        const crackBuf = ac.createBuffer(1, crackLen, sr);
         const crackData = crackBuf.getChannelData(0);
         for (let i = 0; i < crackLen; i++) {
-          const env = Math.pow(1 - i / crackLen, 12);
-          crackData[i] = (Math.random() * 2 - 1) * env;
+          crackData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / crackLen, 6);
         }
         const crackSrc = ac.createBufferSource();
         crackSrc.buffer = crackBuf;
-
-        // hp1: remove mud below 1.2kHz
-        const hp1 = ac.createBiquadFilter();
-        hp1.type = 'highpass';
-        hp1.frequency.value = 1200;
-        hp1.Q.value = 0.5;
-
-        // hp2: resonant highpass — high Q creates a natural boost peak at cutoff
-        // This achieves the same "snap" emphasis as a peaking filter but is iOS-safe
-        const snapFreq = Math.max(2500, 4000 - radius * 15);
-        const hp2 = ac.createBiquadFilter();
-        hp2.type = 'highpass';
-        hp2.frequency.value = snapFreq;
-        hp2.Q.value = 3.5;
-
-        const crackGain = ac.createGain();
-        crackSrc.connect(hp1);
-        hp1.connect(hp2);
-        hp2.connect(crackGain);
-        crackGain.connect(comp);
-        crackGain.gain.setValueAtTime(10.0, now);
+        const hp = ac.createBiquadFilter();
+        hp.type = 'highpass';
+        hp.frequency.value = 1800;
+        hp.Q.value = 0.7;
+        const crackEnv = ac.createGain();
+        crackSrc.connect(hp);
+        hp.connect(crackEnv);
+        crackEnv.connect(out);
+        crackEnv.gain.setValueAtTime(0.6, now);
         crackSrc.start(now);
-
-        // ── AIR PUFF ──
-        const airLen = Math.floor(ac.sampleRate * 0.022);
-        const airBuf = ac.createBuffer(1, airLen, ac.sampleRate);
-        const airData = airBuf.getChannelData(0);
-        for (let i = 0; i < airLen; i++) {
-          const env = Math.pow(1 - i / airLen, 5);
-          airData[i] = (Math.random() * 2 - 1) * env;
-        }
-        const airSrc = ac.createBufferSource();
-        airSrc.buffer = airBuf;
-        const airBp = ac.createBiquadFilter();
-        airBp.type = 'bandpass';
-        airBp.frequency.value = 900;
-        airBp.Q.value = 2.5;
-        const airGain = ac.createGain();
-        airSrc.connect(airBp);
-        airBp.connect(airGain);
-        airGain.connect(comp);
-        airGain.gain.setValueAtTime(1.5, now);
-        airSrc.start(now);
 
       } catch(e) {}
     }
