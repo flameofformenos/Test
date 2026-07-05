@@ -2,293 +2,526 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Pop the Bubbles!</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Zayn's Bubble Pop!</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      background: linear-gradient(180deg, #0d1b2a 0%, #1a3a5c 60%, #0d2137 100%);
+    html, body {
       overflow: hidden;
-      width: 100vw;
-      height: 100vh;
+      width: 100%;
+      height: 100%;
+      position: fixed;
       touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+      background: #8fd3f4;
     }
     canvas { display: block; position: fixed; top: 0; left: 0; }
     #score {
       position: fixed;
-      top: 20px;
+      top: max(16px, env(safe-area-inset-top));
       width: 100%;
       text-align: center;
-      color: rgba(255,255,255,0.85);
-      font-size: 2.8rem;
-      font-family: 'Arial Rounded MT Bold', Arial, sans-serif;
+      color: #ffffff;
+      font-size: 3rem;
+      font-family: 'Arial Rounded MT Bold', 'Comic Sans MS', Arial, sans-serif;
+      font-weight: bold;
       pointer-events: none;
-      text-shadow: 0 0 20px rgba(100,200,255,0.9);
-      transition: transform 0.08s;
+      text-shadow: 0 2px 0 rgba(30,110,170,0.55), 0 4px 14px rgba(30,110,170,0.45);
+      transition: transform 0.09s ease-out;
+      z-index: 2;
     }
-    #combo {
+    #cheer {
       position: fixed;
-      top: 80px;
+      top: 42%;
       width: 100%;
       text-align: center;
-      font-size: 1.6rem;
-      font-family: 'Arial Rounded MT Bold', Arial, sans-serif;
+      font-size: 2.4rem;
+      font-family: 'Arial Rounded MT Bold', 'Comic Sans MS', Arial, sans-serif;
+      font-weight: bold;
       pointer-events: none;
       opacity: 0;
-      transition: opacity 0.3s;
-      color: #ffdd44;
-      text-shadow: 0 0 15px rgba(255,200,0,0.8);
+      color: #fff;
+      text-shadow: 0 2px 0 rgba(220,90,140,0.7), 0 6px 18px rgba(220,90,140,0.55);
+      transform: scale(0.6);
+      transition: opacity 0.25s, transform 0.25s;
+      z-index: 2;
     }
+    #cheer.show { opacity: 1; transform: scale(1); }
     #hint {
       position: fixed;
-      bottom: 40px;
+      bottom: max(34px, env(safe-area-inset-bottom));
       width: 100%;
       text-align: center;
-      color: rgba(255,255,255,0.35);
-      font-size: 1.3rem;
-      font-family: Arial, sans-serif;
+      color: rgba(255,255,255,0.95);
+      font-size: 1.5rem;
+      font-family: 'Arial Rounded MT Bold', 'Comic Sans MS', Arial, sans-serif;
       pointer-events: none;
-      animation: pulse 2.5s infinite;
+      text-shadow: 0 2px 8px rgba(30,110,170,0.6);
+      animation: pulse 2.2s infinite;
+      transition: opacity 0.5s;
+      z-index: 2;
     }
     @keyframes pulse {
-      0%,100% { opacity: 0.35; }
-      50% { opacity: 0.8; }
+      0%,100% { opacity: 0.65; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.06); }
     }
   </style>
 </head>
 <body>
   <canvas id="canvas"></canvas>
   <div id="score">🫧 0</div>
-  <div id="combo"></div>
-  <div id="hint">POP THE BUBBLES!</div>
+  <div id="cheer"></div>
+  <div id="hint">👆 Pop the bubbles, Zayn!</div>
 
   <script>
+    'use strict';
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const scoreEl = document.getElementById('score');
-    const comboEl = document.getElementById('combo');
+    const cheerEl = document.getElementById('cheer');
     const hintEl = document.getElementById('hint');
 
-    let W = canvas.width = window.innerWidth;
-    let H = canvas.height = window.innerHeight;
-    window.addEventListener('resize', () => {
-      W = canvas.width = window.innerWidth;
-      H = canvas.height = window.innerHeight;
+    let W = 0, H = 0, dpr = 1, skyGrad = null;
+
+    function resize() {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      W = window.innerWidth;
+      H = window.innerHeight;
+      canvas.width = Math.round(W * dpr);
+      canvas.height = Math.round(H * dpr);
+      canvas.style.width = W + 'px';
+      canvas.style.height = H + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      skyGrad = ctx.createLinearGradient(0, 0, 0, H);
+      skyGrad.addColorStop(0,    '#aee4ff');
+      skyGrad.addColorStop(0.55, '#8fd3f4');
+      skyGrad.addColorStop(1,    '#cdeecf');
+    }
+    window.addEventListener('resize', resize);
+    window.addEventListener('orientationchange', () => setTimeout(resize, 250));
+    resize();
+
+    /* ================================================================
+       AUDIO — built for iPhone / iOS Safari.
+       - AudioContext is created + resumed inside the first real touch.
+       - A silent buffer is played inside that same gesture to unlock.
+       - navigator.audioSession.type = 'playback' makes sound play even
+         when the iPhone hardware silent/mute switch is ON.
+       - Context is re-resumed on every tap and on visibility changes,
+         because iOS suspends it after interruptions (calls, Siri, etc).
+       ================================================================ */
+    let audioCtx = null;
+    let masterOut = null;
+    let noiseBuf = null;
+    let unlocked = false;
+
+    function setPlaybackSession() {
+      try {
+        if (navigator.audioSession) navigator.audioSession.type = 'playback';
+      } catch (e) {}
+    }
+    setPlaybackSession();
+
+    function initAudio() {
+      setPlaybackSession();
+      if (!audioCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        audioCtx = new AC();
+
+        // master chain: gain -> gentle compressor -> speakers,
+        // so rapid multi-finger popping stays loud but clean
+        const comp = audioCtx.createDynamicsCompressor();
+        comp.threshold.value = -18;
+        comp.knee.value = 20;
+        comp.ratio.value = 6;
+        comp.attack.value = 0.002;
+        comp.release.value = 0.12;
+        masterOut = audioCtx.createGain();
+        masterOut.gain.value = 0.9;
+        masterOut.connect(comp);
+        comp.connect(audioCtx.destination);
+
+        // shared noise buffer for the pop texture
+        const len = Math.floor(audioCtx.sampleRate * 0.25);
+        noiseBuf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+        const d = noiseBuf.getChannelData(0);
+        for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+
+        audioCtx.onstatechange = () => {
+          if (audioCtx.state === 'suspended' || audioCtx.state === 'interrupted') {
+            audioCtx.resume().catch(() => {});
+          }
+        };
+      }
+      if (audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
+      if (!unlocked && audioCtx) {
+        // play a silent tick inside the user gesture — the classic iOS unlock
+        try {
+          const buf = audioCtx.createBuffer(1, 1, 22050);
+          const src = audioCtx.createBufferSource();
+          src.buffer = buf;
+          src.connect(audioCtx.destination);
+          src.start(0);
+          unlocked = true;
+        } catch (e) {}
+      }
+    }
+    ['pointerdown', 'touchstart', 'touchend', 'mousedown', 'keydown'].forEach(ev =>
+      window.addEventListener(ev, initAudio, { capture: true, passive: true }));
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && audioCtx && audioCtx.state !== 'running') {
+        audioCtx.resume().catch(() => {});
+      }
     });
 
-    let bubbles = [];
-    let popParticles = [];
-    let score = 0;
-    let combo = 0;
-    let comboTimer = null;
-    let audioCtx = null;
-
-    function getAudio() {
-      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (audioCtx.state === 'suspended') audioCtx.resume();
-      return audioCtx;
-    }
-
+    // The pop: a deep, rounded "bubble wrap" thunk.
+    // 1) low sine thump that drops fast in pitch (the body of the pop)
+    // 2) short band-passed noise knock around 300-500 Hz (the skin snapping)
+    // 3) the tiniest high tick for tactility — quiet, so it never gets tinny
     function playPop(radius) {
+      if (!audioCtx || !masterOut) return;
+      if (audioCtx.state !== 'running') { audioCtx.resume().catch(() => {}); }
       try {
-        const ac = getAudio();
+        const ac = audioCtx;
         const now = ac.currentTime;
-        const sr = ac.sampleRate;
+        const rnd = (Math.random() - 0.5);
 
-        const out = ac.createGain();
-        out.connect(ac.destination);
-        out.gain.setValueAtTime(0.7, now);
+        // bigger bubble -> deeper pop
+        const f0 = Math.max(140, 300 - radius * 1.7) * (1 + rnd * 0.12);
 
-        // ── OSCILLATOR POP TONE ──
-        // Pitch-drop sine — same technique as fireworks sparkle, guaranteed on iOS
+        // 1) low thump
         const osc = ac.createOscillator();
-        const oscEnv = ac.createGain();
-        osc.connect(oscEnv);
-        oscEnv.connect(out);
-        const popFreq = Math.max(180, 420 - radius * 3);
         osc.type = 'sine';
-        osc.frequency.setValueAtTime(popFreq * 2.5, now);
-        osc.frequency.exponentialRampToValueAtTime(popFreq, now + 0.055);
-        oscEnv.gain.setValueAtTime(0.9, now);
-        oscEnv.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+        osc.frequency.setValueAtTime(f0, now);
+        osc.frequency.exponentialRampToValueAtTime(Math.max(52, f0 * 0.3), now + 0.07);
+        const og = ac.createGain();
+        og.gain.setValueAtTime(1.0, now);
+        og.gain.exponentialRampToValueAtTime(0.001, now + 0.17);
+        osc.connect(og);
+        og.connect(masterOut);
         osc.start(now);
-        osc.stop(now + 0.1);
+        osc.stop(now + 0.2);
 
-        // ── NOISE CRACK ──
-        // 100ms buffer, single highpass — longer buffers work more reliably on iOS
-        const crackLen = Math.floor(sr * 0.1);
-        const crackBuf = ac.createBuffer(1, crackLen, sr);
-        const crackData = crackBuf.getChannelData(0);
-        for (let i = 0; i < crackLen; i++) {
-          crackData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / crackLen, 6);
-        }
-        const crackSrc = ac.createBufferSource();
-        crackSrc.buffer = crackBuf;
+        // 2) mid knock (noise through bandpass)
+        const knock = ac.createBufferSource();
+        knock.buffer = noiseBuf;
+        const bp = ac.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.value = 340 + rnd * 120 + Math.max(0, 60 - radius);
+        bp.Q.value = 1.1;
+        const kg = ac.createGain();
+        kg.gain.setValueAtTime(0.85, now);
+        kg.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+        knock.connect(bp);
+        bp.connect(kg);
+        kg.connect(masterOut);
+        knock.start(now);
+        knock.stop(now + 0.1);
+
+        // 3) tiny tactile tick
+        const tick = ac.createBufferSource();
+        tick.buffer = noiseBuf;
         const hp = ac.createBiquadFilter();
         hp.type = 'highpass';
-        hp.frequency.value = 1800;
-        hp.Q.value = 0.7;
-        const crackEnv = ac.createGain();
-        crackSrc.connect(hp);
-        hp.connect(crackEnv);
-        crackEnv.connect(out);
-        crackEnv.gain.setValueAtTime(0.6, now);
-        crackSrc.start(now);
-
-      } catch(e) {}
+        hp.frequency.value = 2600;
+        const tg = ac.createGain();
+        tg.gain.setValueAtTime(0.10, now);
+        tg.gain.exponentialRampToValueAtTime(0.001, now + 0.025);
+        tick.connect(hp);
+        hp.connect(tg);
+        tg.connect(masterOut);
+        tick.start(now);
+        tick.stop(now + 0.03);
+      } catch (e) {}
     }
 
-    const BUBBLE_HUES = [200, 220, 260, 300, 170, 40, 340];
+    // little ascending chime for milestone celebrations
+    function playCheer() {
+      if (!audioCtx || !masterOut) return;
+      try {
+        const ac = audioCtx;
+        const notes = [523.25, 659.25, 783.99]; // C5 E5 G5
+        notes.forEach((f, i) => {
+          const t = ac.currentTime + i * 0.11;
+          const o = ac.createOscillator();
+          o.type = 'triangle';
+          o.frequency.value = f;
+          const g = ac.createGain();
+          g.gain.setValueAtTime(0.0001, t);
+          g.gain.linearRampToValueAtTime(0.25, t + 0.02);
+          g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+          o.connect(g);
+          g.connect(masterOut);
+          o.start(t);
+          o.stop(t + 0.4);
+        });
+      } catch (e) {}
+    }
+
+    /* ================================================================
+       CLOUDS + SUN
+       ================================================================ */
+    function makeCloudSprite(scale) {
+      const w = 260 * scale, h = 110 * scale;
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const g = c.getContext('2d');
+      const blobs = [
+        [0.30, 0.62, 0.30], [0.50, 0.45, 0.36], [0.70, 0.60, 0.28],
+        [0.42, 0.70, 0.26], [0.60, 0.72, 0.24]
+      ];
+      blobs.forEach(([bx, by, br]) => {
+        const r = br * h;
+        const rg = g.createRadialGradient(bx * w, by * h, r * 0.2, bx * w, by * h, r);
+        rg.addColorStop(0, 'rgba(255,255,255,0.95)');
+        rg.addColorStop(0.7, 'rgba(255,255,255,0.55)');
+        rg.addColorStop(1, 'rgba(255,255,255,0)');
+        g.fillStyle = rg;
+        g.beginPath();
+        g.arc(bx * w, by * h, r, 0, Math.PI * 2);
+        g.fill();
+      });
+      return c;
+    }
+    const clouds = [];
+    for (let i = 0; i < 4; i++) {
+      const s = 0.7 + Math.random() * 0.9;
+      clouds.push({
+        sprite: makeCloudSprite(s),
+        x: Math.random() * W,
+        y: H * (0.05 + Math.random() * 0.35),
+        v: 0.08 + Math.random() * 0.12,
+        alpha: 0.5 + Math.random() * 0.4
+      });
+    }
+
+    function drawBackground() {
+      ctx.fillStyle = skyGrad;
+      ctx.fillRect(0, 0, W, H);
+      // soft sun, top-left
+      const sun = ctx.createRadialGradient(W * 0.14, H * 0.12, 10, W * 0.14, H * 0.12, Math.min(W, H) * 0.38);
+      sun.addColorStop(0, 'rgba(255,246,190,0.9)');
+      sun.addColorStop(0.25, 'rgba(255,240,170,0.35)');
+      sun.addColorStop(1, 'rgba(255,240,170,0)');
+      ctx.fillStyle = sun;
+      ctx.fillRect(0, 0, W, H);
+      clouds.forEach(cl => {
+        cl.x += cl.v;
+        if (cl.x - cl.sprite.width > W) cl.x = -cl.sprite.width;
+        ctx.globalAlpha = cl.alpha;
+        ctx.drawImage(cl.sprite, cl.x - cl.sprite.width / 2, cl.y - cl.sprite.height / 2);
+        ctx.globalAlpha = 1;
+      });
+    }
+
+    /* ================================================================
+       BUBBLES — iridescent soap-film look
+       ================================================================ */
+    const BUBBLE_HUES = [340, 200, 265, 130, 40, 300, 180, 15, 220, 90];
+    let bubbles = [];
+    let popFX = [];
+    let score = 0;
 
     class Bubble {
-      constructor() { this.reset(true); }
+      constructor(initial) { this.reset(initial); }
 
-      reset(init = false) {
-        this.r = 28 + Math.random() * 52;
-        this.x = this.r + Math.random() * (W - this.r * 2);
-        this.y = init ? Math.random() * H : H + this.r + 20;
-        this.vy = -(0.4 + Math.random() * 0.7);
-        this.vx = 0;
+      reset(initial = false) {
+        this.r = 34 + Math.random() * 52;
+        this.x = this.r + Math.random() * Math.max(1, W - this.r * 2);
+        this.y = initial ? Math.random() * H : H + this.r + 10 + Math.random() * 60;
+        this.vy = -(0.35 + Math.random() * 0.6);
+        this.wind = (Math.random() - 0.5) * 0.35;
         this.phase = Math.random() * Math.PI * 2;
-        this.wobbleSpeed = 0.015 + Math.random() * 0.015;
-        this.wobbleAmp = 0.4 + Math.random() * 0.5;
+        this.wobbleSpeed = 0.012 + Math.random() * 0.014;
+        this.wobbleAmp = 0.35 + Math.random() * 0.5;
         this.hue = BUBBLE_HUES[Math.floor(Math.random() * BUBBLE_HUES.length)];
-        this.hueShift = 0;
-        this.alpha = 0.55 + Math.random() * 0.3;
+        this.shimmer = Math.random() * 360;
+        this.spin = Math.random() * Math.PI * 2;
+        this.spinV = (Math.random() - 0.5) * 0.01;
         this.alive = true;
+        this.birth = performance.now();
       }
 
       update() {
         this.phase += this.wobbleSpeed;
-        this.x += Math.sin(this.phase) * this.wobbleAmp;
+        this.x += Math.sin(this.phase) * this.wobbleAmp + this.wind;
         this.y += this.vy;
-        this.hueShift = (this.hueShift + 0.5) % 360;
-        if (this.y + this.r < -10) this.reset();
+        this.shimmer = (this.shimmer + 0.6) % 360;
+        this.spin += this.spinV;
+        if (this.y + this.r < -20) this.reset();
+        if (this.x + this.r < -30) this.x = W + this.r;
+        if (this.x - this.r > W + 30) this.x = -this.r;
       }
 
       draw() {
+        const r = this.r;
+        const h = this.hue;
+        const sq = 1 + Math.sin(this.phase * 2.3) * 0.035; // gentle jelly wobble
+        // pop-in scale for freshly (re)spawned bubbles
+        const age = (performance.now() - this.birth) / 400;
+        const grow = age < 1 ? 0.4 + 0.6 * (1 - Math.pow(1 - age, 3)) : 1;
+
         ctx.save();
         ctx.translate(this.x, this.y);
-        const h = (this.hue + this.hueShift * 0.3) % 360;
+        ctx.scale(grow / sq, grow * sq);
 
-        const glow = ctx.createRadialGradient(0, 0, this.r * 0.7, 0, 0, this.r * 1.3);
-        glow.addColorStop(0, `hsla(${h},80%,70%,0)`);
-        glow.addColorStop(1, `hsla(${h},90%,75%,0.12)`);
+        // thin-film body: near-transparent middle, tinted colored rim
+        const body = ctx.createRadialGradient(0, 0, r * 0.35, 0, 0, r);
+        body.addColorStop(0,    `hsla(${h},70%,96%,0.05)`);
+        body.addColorStop(0.72, `hsla(${h},65%,85%,0.10)`);
+        body.addColorStop(0.90, `hsla(${h},80%,68%,0.38)`);
+        body.addColorStop(1,    `hsla(${h},85%,55%,0.55)`);
         ctx.beginPath();
-        ctx.arc(0, 0, this.r * 1.3, 0, Math.PI * 2);
-        ctx.fillStyle = glow;
-        ctx.fill();
-
-        const body = ctx.createRadialGradient(-this.r*0.2, -this.r*0.2, this.r*0.1, 0, 0, this.r);
-        body.addColorStop(0,   `hsla(${h},70%,90%,0.08)`);
-        body.addColorStop(0.6, `hsla(${h},80%,60%,${this.alpha * 0.35})`);
-        body.addColorStop(1,   `hsla(${(h+40)%360},90%,70%,${this.alpha * 0.7})`);
-        ctx.beginPath();
-        ctx.arc(0, 0, this.r, 0, Math.PI * 2);
+        ctx.arc(0, 0, r, 0, Math.PI * 2);
         ctx.fillStyle = body;
         ctx.fill();
 
+        // iridescent rainbow film on the rim — three hue-shifted arcs
+        // slowly rotating around the bubble
+        ctx.lineWidth = r * 0.14;
+        ctx.lineCap = 'round';
+        for (let i = 0; i < 3; i++) {
+          const a0 = this.spin + this.shimmer * 0.01 + i * (Math.PI * 2 / 3);
+          const arcHue = (h + this.shimmer + i * 110) % 360;
+          ctx.strokeStyle = `hsla(${arcHue},95%,70%,0.30)`;
+          ctx.beginPath();
+          ctx.arc(0, 0, r * 0.90, a0, a0 + 1.9);
+          ctx.stroke();
+        }
+
+        // crisp outer edge
         ctx.beginPath();
-        ctx.arc(0, 0, this.r, 0, Math.PI * 2);
-        ctx.strokeStyle = `hsla(${(h+60)%360},100%,85%,0.6)`;
-        ctx.lineWidth = this.r * 0.06;
+        ctx.arc(0, 0, r * 0.985, 0, Math.PI * 2);
+        ctx.strokeStyle = `hsla(${(h + 30) % 360},90%,80%,0.5)`;
+        ctx.lineWidth = 1.5;
         ctx.stroke();
 
-        const hl = ctx.createRadialGradient(
-          -this.r * 0.32, -this.r * 0.38, 0,
-          -this.r * 0.28, -this.r * 0.32, this.r * 0.38
-        );
-        hl.addColorStop(0,   'rgba(255,255,255,0.95)');
-        hl.addColorStop(0.4, 'rgba(255,255,255,0.4)');
-        hl.addColorStop(1,   'rgba(255,255,255,0)');
-        ctx.beginPath();
-        ctx.arc(0, 0, this.r, 0, Math.PI * 2);
+        // big soft window-light highlight, top-left
+        ctx.save();
+        ctx.translate(-r * 0.34, -r * 0.40);
+        ctx.rotate(-0.65);
+        const hl = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 0.38);
+        hl.addColorStop(0, 'rgba(255,255,255,0.9)');
+        hl.addColorStop(0.5, 'rgba(255,255,255,0.35)');
+        hl.addColorStop(1, 'rgba(255,255,255,0)');
         ctx.fillStyle = hl;
-        ctx.fill();
-
-        const hl2 = ctx.createRadialGradient(
-          this.r * 0.38, this.r * 0.42, 0,
-          this.r * 0.38, this.r * 0.42, this.r * 0.18
-        );
-        hl2.addColorStop(0, 'rgba(255,255,255,0.5)');
-        hl2.addColorStop(1, 'rgba(255,255,255,0)');
         ctx.beginPath();
-        ctx.arc(0, 0, this.r, 0, Math.PI * 2);
+        ctx.ellipse(0, 0, r * 0.36, r * 0.20, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // small counter-highlight, bottom-right
+        const hl2 = ctx.createRadialGradient(r * 0.42, r * 0.45, 0, r * 0.42, r * 0.45, r * 0.16);
+        hl2.addColorStop(0, 'rgba(255,255,255,0.55)');
+        hl2.addColorStop(1, 'rgba(255,255,255,0)');
         ctx.fillStyle = hl2;
+        ctx.beginPath();
+        ctx.arc(r * 0.42, r * 0.45, r * 0.16, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.restore();
       }
-
-      contains(px, py) {
-        const dx = px - this.x, dy = py - this.y;
-        return dx * dx + dy * dy <= this.r * this.r;
-      }
     }
 
-    function spawnPopParticles(x, y, r, hue) {
-      popParticles.push({ type: 'ring', x, y, r, maxR: r * 2.5, hue, alpha: 0.9 });
-      const count = 8 + Math.floor(r / 8);
-      for (let i = 0; i < count; i++) {
-        const angle = (Math.PI * 2 * i / count) + Math.random() * 0.4;
-        const speed = 2 + Math.random() * 4;
-        popParticles.push({
-          type: 'drop', x, y,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
+    /* ================================================================
+       POP EFFECTS
+       ================================================================ */
+    function spawnPopFX(x, y, r, hue) {
+      popFX.push({ type: 'ring', x, y, r: r * 0.6, maxR: r * 2.2, hue, alpha: 0.95, lw: Math.max(2.5, r * 0.09) });
+      popFX.push({ type: 'flash', x, y, r: r * 0.9, alpha: 0.7 });
+      const drops = 10 + Math.floor(r / 7);
+      for (let i = 0; i < drops; i++) {
+        const a = (Math.PI * 2 * i / drops) + Math.random() * 0.5;
+        const sp = 2 + Math.random() * 4.5;
+        popFX.push({
+          type: 'drop', x: x + Math.cos(a) * r * 0.7, y: y + Math.sin(a) * r * 0.7,
+          vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1,
           r: 2 + Math.random() * 4,
-          hue: (hue + Math.random() * 40 - 20 + 360) % 360,
-          alpha: 1,
-          decay: 0.04 + Math.random() * 0.04
+          hue: (hue + Math.random() * 50 - 25 + 360) % 360,
+          alpha: 1, decay: 0.035 + Math.random() * 0.035
         });
       }
-      for (let i = 0; i < 6; i++) {
-        const angle = Math.random() * Math.PI * 2;
-        const speed = 1 + Math.random() * 3;
-        popParticles.push({
+      for (let i = 0; i < 5; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = 1 + Math.random() * 2.5;
+        popFX.push({
           type: 'sparkle', x, y,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
-          r: 1.5 + Math.random() * 2,
+          vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+          r: 2 + Math.random() * 2.5,
           hue: (hue + 60) % 360,
-          alpha: 1,
-          decay: 0.035 + Math.random() * 0.03
+          alpha: 1, decay: 0.03 + Math.random() * 0.03
         });
       }
     }
 
-    function updateDrawParticles() {
-      for (let i = popParticles.length - 1; i >= 0; i--) {
-        const p = popParticles[i];
+    function spawnConfetti() {
+      const emojis = ['🎉', '⭐', '🫧', '💛', '🌈', '✨'];
+      for (let i = 0; i < 16; i++) {
+        popFX.push({
+          type: 'emoji',
+          char: emojis[Math.floor(Math.random() * emojis.length)],
+          x: W * (0.15 + Math.random() * 0.7),
+          y: H * (0.25 + Math.random() * 0.3),
+          vx: (Math.random() - 0.5) * 4,
+          vy: -2 - Math.random() * 4,
+          size: 22 + Math.random() * 22,
+          rot: (Math.random() - 0.5) * 0.2,
+          angle: (Math.random() - 0.5) * 0.8,
+          alpha: 1, decay: 0.008 + Math.random() * 0.006
+        });
+      }
+    }
+
+    function updateDrawFX() {
+      for (let i = popFX.length - 1; i >= 0; i--) {
+        const p = popFX[i];
         if (p.type === 'ring') {
-          p.r += (p.maxR - p.r) * 0.18;
-          p.alpha -= 0.06;
-          if (p.alpha <= 0) { popParticles.splice(i, 1); continue; }
+          p.r += (p.maxR - p.r) * 0.20;
+          p.alpha -= 0.07;
+          if (p.alpha <= 0) { popFX.splice(i, 1); continue; }
           ctx.beginPath();
           ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-          ctx.strokeStyle = `hsla(${p.hue},80%,75%,${p.alpha})`;
-          ctx.lineWidth = 2.5;
+          ctx.strokeStyle = `hsla(${p.hue},85%,60%,${p.alpha})`;
+          ctx.lineWidth = p.lw * p.alpha;
           ctx.stroke();
+        } else if (p.type === 'flash') {
+          p.r *= 1.14;
+          p.alpha -= 0.11;
+          if (p.alpha <= 0) { popFX.splice(i, 1); continue; }
+          const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r);
+          g.addColorStop(0, `rgba(255,255,255,${p.alpha})`);
+          g.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+          ctx.fill();
         } else if (p.type === 'drop') {
           p.x += p.vx; p.y += p.vy;
-          p.vy += 0.15; p.vx *= 0.97;
+          p.vy += 0.16; p.vx *= 0.98;
           p.alpha -= p.decay;
-          if (p.alpha <= 0) { popParticles.splice(i, 1); continue; }
+          if (p.alpha <= 0) { popFX.splice(i, 1); continue; }
           ctx.beginPath();
           ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-          const dg = ctx.createRadialGradient(p.x - p.r*0.3, p.y - p.r*0.3, 0, p.x, p.y, p.r);
-          dg.addColorStop(0, `hsla(${p.hue},70%,90%,${p.alpha})`);
-          dg.addColorStop(1, `hsla(${p.hue},80%,60%,${p.alpha * 0.5})`);
-          ctx.fillStyle = dg;
+          ctx.fillStyle = `hsla(${p.hue},75%,60%,${p.alpha * 0.85})`;
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(p.x - p.r * 0.3, p.y - p.r * 0.3, p.r * 0.4, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(255,255,255,${p.alpha * 0.8})`;
           ctx.fill();
         } else if (p.type === 'sparkle') {
           p.x += p.vx; p.y += p.vy;
-          p.vx *= 0.95; p.vy *= 0.95;
+          p.vx *= 0.94; p.vy *= 0.94;
           p.alpha -= p.decay;
-          if (p.alpha <= 0) { popParticles.splice(i, 1); continue; }
+          if (p.alpha <= 0) { popFX.splice(i, 1); continue; }
           ctx.save();
           ctx.translate(p.x, p.y);
-          ctx.fillStyle = `hsla(${p.hue},100%,90%,${p.alpha})`;
+          ctx.fillStyle = `hsla(${p.hue},100%,75%,${p.alpha})`;
           ctx.beginPath();
           for (let s = 0; s < 4; s++) {
             const a = s * Math.PI / 2;
@@ -300,55 +533,90 @@
           ctx.closePath();
           ctx.fill();
           ctx.restore();
+        } else if (p.type === 'emoji') {
+          p.x += p.vx; p.y += p.vy;
+          p.vy += 0.08;
+          p.angle += p.rot;
+          p.alpha -= p.decay;
+          if (p.alpha <= 0 || p.y > H + 60) { popFX.splice(i, 1); continue; }
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate(p.angle);
+          ctx.globalAlpha = Math.min(1, p.alpha);
+          ctx.font = p.size + 'px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(p.char, 0, 0);
+          ctx.restore();
         }
       }
     }
 
-    const NUM_BUBBLES = Math.min(18, Math.floor(W * H / 28000) + 8);
-    for (let i = 0; i < NUM_BUBBLES; i++) bubbles.push(new Bubble());
+    /* ================================================================
+       GAME
+       ================================================================ */
+    const NUM_BUBBLES = Math.max(9, Math.min(16, Math.floor(W * H / 32000)));
+    for (let i = 0; i < NUM_BUBBLES; i++) bubbles.push(new Bubble(true));
 
-    setInterval(() => {
-      if (bubbles.filter(b => b.alive).length < NUM_BUBBLES) bubbles.push(new Bubble());
-    }, 1200);
+    const CHEERS = ['YAY ZAYN! 🎉', 'WOW! ⭐', 'SUPER POPPING! 🫧', 'AMAZING! 🌈', 'GREAT JOB ZAYN! 💛'];
+    function celebrate() {
+      cheerEl.textContent = CHEERS[Math.floor(Math.random() * CHEERS.length)];
+      cheerEl.classList.add('show');
+      setTimeout(() => cheerEl.classList.remove('show'), 1600);
+      spawnConfetti();
+      playCheer();
+    }
 
     function tryPop(px, py) {
-      let hit = null;
-      for (let i = bubbles.length - 1; i >= 0; i--) {
-        if (bubbles[i].alive && bubbles[i].contains(px, py)) { hit = bubbles[i]; break; }
+      // forgiving hit test for little fingers: pop the nearest bubble
+      // whose (slightly padded) circle contains the touch
+      let best = null, bestD = Infinity;
+      for (const b of bubbles) {
+        if (!b.alive) continue;
+        const dx = px - b.x, dy = py - b.y;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d <= b.r + 22 && d < bestD) { best = b; bestD = d; }
       }
-      if (!hit) return;
+      if (!best) return;
 
-      hit.alive = false;
-      playPop(hit.r);
-      spawnPopParticles(hit.x, hit.y, hit.r, hit.hue);
+      best.alive = false;
+      playPop(best.r);
+      spawnPopFX(best.x, best.y, best.r, best.hue);
 
       score++;
       scoreEl.textContent = '🫧 ' + score;
-      scoreEl.style.transform = 'scale(1.25)';
-      setTimeout(() => scoreEl.style.transform = 'scale(1)', 100);
+      scoreEl.style.transform = 'scale(1.3)';
+      setTimeout(() => { scoreEl.style.transform = 'scale(1)'; }, 110);
+      if (score === 1) {
+        // the pulse keyframe animation would override inline opacity
+        hintEl.style.animation = 'none';
+        hintEl.style.opacity = '0';
+      }
+      if (score % 10 === 0) celebrate();
 
-      combo++;
-      clearTimeout(comboTimer);
-      if (combo >= 3) { comboEl.textContent = combo + 'x COMBO! 🎉'; comboEl.style.opacity = '1'; }
-      comboTimer = setTimeout(() => { combo = 0; comboEl.style.opacity = '0'; }, 1200);
-
-      if (score === 1) hintEl.style.opacity = '0';
-      setTimeout(() => { hit.reset(); hit.alive = true; }, 600 + Math.random() * 800);
+      setTimeout(() => { best.reset(); }, 500 + Math.random() * 900);
     }
 
-    canvas.addEventListener('click', e => tryPop(e.clientX, e.clientY));
-    canvas.addEventListener('touchstart', e => {
+    // pointerdown fires once per finger — multi-touch popping works
+    canvas.addEventListener('pointerdown', e => {
       e.preventDefault();
-      Array.from(e.changedTouches).forEach(t => tryPop(t.clientX, t.clientY));
-    }, { passive: false });
+      tryPop(e.clientX, e.clientY);
+    });
+    // block iOS double-tap zoom / pinch / scroll
+    document.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
+    document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+    document.addEventListener('gesturestart', e => e.preventDefault());
+    document.addEventListener('dblclick', e => e.preventDefault());
 
-    function draw() {
-      ctx.clearRect(0, 0, W, H);
-      bubbles.forEach(b => { if (b.alive) { b.update(); b.draw(); } });
-      updateDrawParticles();
-      requestAnimationFrame(draw);
+    function frame() {
+      drawBackground();
+      for (const b of bubbles) {
+        if (b.alive) { b.update(); b.draw(); }
+      }
+      updateDrawFX();
+      requestAnimationFrame(frame);
     }
-    draw();
+    frame();
   </script>
 </body>
 </html>
