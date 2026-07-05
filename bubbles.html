@@ -86,7 +86,7 @@
     const cheerEl = document.getElementById('cheer');
     const hintEl = document.getElementById('hint');
 
-    let W = 0, H = 0, dpr = 1, skyGrad = null;
+    let W = 0, H = 0, dpr = 1;
 
     function resize() {
       dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -97,10 +97,6 @@
       canvas.style.width = W + 'px';
       canvas.style.height = H + 'px';
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      skyGrad = ctx.createLinearGradient(0, 0, 0, H);
-      skyGrad.addColorStop(0,    '#243f66');
-      skyGrad.addColorStop(0.55, '#3c6b96');
-      skyGrad.addColorStop(1,    '#79a8bb');
     }
     window.addEventListener('resize', resize);
     window.addEventListener('orientationchange', () => setTimeout(resize, 250));
@@ -241,6 +237,61 @@
       } catch (e) {}
     }
 
+    // happy little voices for freed animals, played just after the pop
+    function playAnimalSound(kind) {
+      if (!audioCtx || !masterOut) return;
+      try {
+        const ac = audioCtx;
+        const sweep = (type, f1, f2, t, dur, vol, lpf) => {
+          const o = ac.createOscillator();
+          o.type = type;
+          o.frequency.setValueAtTime(f1, t);
+          o.frequency.exponentialRampToValueAtTime(f2, t + dur * 0.8);
+          const gn = ac.createGain();
+          gn.gain.setValueAtTime(0.0001, t);
+          gn.gain.linearRampToValueAtTime(vol, t + 0.015);
+          gn.gain.exponentialRampToValueAtTime(0.001, t + dur);
+          let node = o;
+          if (lpf) {
+            const f = ac.createBiquadFilter();
+            f.type = 'lowpass';
+            f.frequency.value = lpf;
+            o.connect(f);
+            node = f;
+          }
+          node.connect(gn);
+          gn.connect(masterOut);
+          o.start(t);
+          o.stop(t + dur + 0.02);
+        };
+        const t0 = ac.currentTime + 0.09;
+        if (kind === 'chirp') {
+          sweep('sine', 1500, 2100, t0, 0.08, 0.15);
+          sweep('sine', 1700, 2300, t0 + 0.11, 0.08, 0.13);
+        } else if (kind === 'quack') {
+          sweep('sawtooth', 300, 190, t0, 0.13, 0.16, 1100);
+          sweep('sawtooth', 280, 175, t0 + 0.16, 0.11, 0.13, 1100);
+        } else if (kind === 'blub') {
+          sweep('sine', 560, 260, t0, 0.09, 0.17);
+          sweep('sine', 430, 200, t0 + 0.12, 0.09, 0.14);
+        } else if (kind === 'boing') {
+          const o = ac.createOscillator();
+          o.type = 'triangle';
+          o.frequency.setValueAtTime(150, t0);
+          o.frequency.exponentialRampToValueAtTime(430, t0 + 0.09);
+          o.frequency.exponentialRampToValueAtTime(230, t0 + 0.22);
+          const gn = ac.createGain();
+          gn.gain.setValueAtTime(0.0001, t0);
+          gn.gain.linearRampToValueAtTime(0.2, t0 + 0.02);
+          gn.gain.exponentialRampToValueAtTime(0.001, t0 + 0.3);
+          o.connect(gn);
+          gn.connect(masterOut);
+          o.start(t0);
+          o.stop(t0 + 0.32);
+        }
+      } catch (e) {}
+    }
+
     // little ascending chime for milestone celebrations
     function playCheer() {
       if (!audioCtx || !masterOut) return;
@@ -262,6 +313,79 @@
           o.stop(t + 0.4);
         });
       } catch (e) {}
+    }
+
+    /* ================================================================
+       CHANGING WORLDS — dusk sky -> starry night -> under the sea.
+       The world advances every 30 pops with a slow crossfade.
+       ================================================================ */
+    const WORLDS = [
+      { top: '#243f66', mid: '#3c6b96', bot: '#79a8bb' }, // dusk sky
+      { top: '#0d1233', mid: '#1c2a55', bot: '#31456e' }, // starry night
+      { top: '#06364e', mid: '#0b5d75', bot: '#12808d' }  // under the sea
+    ];
+    let worldIdx = 0, worldPrev = 0, worldFade = 1;
+    let glowW = 0;   // how "night" we are — bubbles glow at night
+    let frameT = 0;
+
+    function advanceWorld() {
+      worldPrev = worldIdx;
+      worldIdx = (worldIdx + 1) % WORLDS.length;
+      worldFade = 0;
+    }
+    function worldW(i) {
+      return worldIdx === i ? worldFade : (worldPrev === i ? 1 - worldFade : 0);
+    }
+    function hexToRgb(hx) {
+      const n = parseInt(hx.slice(1), 16);
+      return [n >> 16 & 255, n >> 8 & 255, n & 255];
+    }
+    function lerpColor(a, b, t) {
+      const A = hexToRgb(a), B = hexToRgb(b);
+      return 'rgb(' + Math.round(A[0] + (B[0] - A[0]) * t) + ',' +
+                      Math.round(A[1] + (B[1] - A[1]) * t) + ',' +
+                      Math.round(A[2] + (B[2] - A[2]) * t) + ')';
+    }
+
+    // night: stars (normalized coords so resize is safe) + crescent moon
+    const stars = [];
+    for (let i = 0; i < 70; i++) {
+      stars.push({
+        x: Math.random(), y: Math.random() * 0.85,
+        r: 0.6 + Math.random() * 1.5,
+        ph: Math.random() * Math.PI * 2,
+        sp: 0.02 + Math.random() * 0.05
+      });
+    }
+    const moonSprite = (() => {
+      const s = 150, c = document.createElement('canvas');
+      c.width = s; c.height = s;
+      const g = c.getContext('2d');
+      g.fillStyle = '#f2edc9';
+      g.beginPath(); g.arc(s / 2, s / 2, 36, 0, Math.PI * 2); g.fill();
+      g.globalCompositeOperation = 'destination-out';
+      g.beginPath(); g.arc(s / 2 + 16, s / 2 - 9, 31, 0, Math.PI * 2); g.fill();
+      g.globalCompositeOperation = 'destination-over';
+      const glow = g.createRadialGradient(s / 2, s / 2, 20, s / 2, s / 2, s / 2);
+      glow.addColorStop(0, 'rgba(240,240,215,0.45)');
+      glow.addColorStop(1, 'rgba(240,240,215,0)');
+      g.fillStyle = glow; g.fillRect(0, 0, s, s);
+      return c;
+    })();
+
+    // sea: background fish (they face left; flipped when swimming right)
+    const FISH_EMOJI = ['🐠', '🐟', '🐡', '🐙', '🦑'];
+    const seaFish = [];
+    for (let i = 0; i < 5; i++) {
+      seaFish.push({
+        e: FISH_EMOJI[i % FISH_EMOJI.length],
+        x: Math.random() * 800,
+        yR: 0.15 + Math.random() * 0.7,
+        dir: Math.random() < 0.5 ? -1 : 1,
+        sp: 0.5 + Math.random() * 0.7,
+        ph: Math.random() * Math.PI * 2,
+        size: 26 + Math.random() * 16
+      });
     }
 
     /* ================================================================
@@ -302,27 +426,100 @@
     }
 
     function drawBackground() {
-      ctx.fillStyle = skyGrad;
+      frameT++;
+      if (worldFade < 1) worldFade = Math.min(1, worldFade + 0.006);
+      const a = WORLDS[worldPrev], b = WORLDS[worldIdx];
+      const g = ctx.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0,    lerpColor(a.top, b.top, worldFade));
+      g.addColorStop(0.55, lerpColor(a.mid, b.mid, worldFade));
+      g.addColorStop(1,    lerpColor(a.bot, b.bot, worldFade));
+      ctx.fillStyle = g;
       ctx.fillRect(0, 0, W, H);
-      // soft sun, top-left
-      const sun = ctx.createRadialGradient(W * 0.14, H * 0.12, 10, W * 0.14, H * 0.12, Math.min(W, H) * 0.38);
-      sun.addColorStop(0, 'rgba(255,225,150,0.55)');
-      sun.addColorStop(0.25, 'rgba(255,210,140,0.20)');
-      sun.addColorStop(1, 'rgba(255,210,140,0)');
-      ctx.fillStyle = sun;
-      ctx.fillRect(0, 0, W, H);
-      clouds.forEach(cl => {
-        cl.x += cl.v;
-        if (cl.x - cl.sprite.width > W) cl.x = -cl.sprite.width;
-        ctx.globalAlpha = cl.alpha;
-        ctx.drawImage(cl.sprite, cl.x - cl.sprite.width / 2, cl.y - cl.sprite.height / 2);
+
+      const duskW = worldW(0), nightW = worldW(1), seaW = worldW(2);
+      glowW = nightW;
+
+      if (duskW > 0.01) {
+        const sun = ctx.createRadialGradient(W * 0.14, H * 0.12, 10, W * 0.14, H * 0.12, Math.min(W, H) * 0.38);
+        sun.addColorStop(0, 'rgba(255,225,150,0.55)');
+        sun.addColorStop(0.25, 'rgba(255,210,140,0.20)');
+        sun.addColorStop(1, 'rgba(255,210,140,0)');
+        ctx.globalAlpha = duskW;
+        ctx.fillStyle = sun;
+        ctx.fillRect(0, 0, W, H);
+        clouds.forEach(cl => {
+          cl.x += cl.v;
+          if (cl.x - cl.sprite.width > W) cl.x = -cl.sprite.width;
+          ctx.globalAlpha = cl.alpha * duskW;
+          ctx.drawImage(cl.sprite, cl.x - cl.sprite.width / 2, cl.y - cl.sprite.height / 2);
+        });
         ctx.globalAlpha = 1;
-      });
+      }
+
+      if (nightW > 0.01) {
+        ctx.globalAlpha = nightW;
+        ctx.drawImage(moonSprite, W * 0.14 - 75, H * 0.12 - 75);
+        ctx.fillStyle = '#eaf2ff';
+        for (const s of stars) {
+          const tw = 0.3 + 0.7 * Math.max(0, Math.sin(frameT * s.sp + s.ph));
+          ctx.globalAlpha = nightW * tw;
+          ctx.beginPath();
+          ctx.arc(s.x * W, s.y * H, s.r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      if (seaW > 0.01) {
+        // swaying light rays from the surface
+        for (let i = 0; i < 3; i++) {
+          ctx.save();
+          ctx.translate(W * (0.2 + i * 0.3), -40);
+          ctx.rotate(0.18 * (i - 1) + Math.sin(frameT * 0.004 + i * 2) * 0.05);
+          const w = 60 + i * 30;
+          // soft-edged beam: horizontal gradient peaking in the middle
+          const ray = ctx.createLinearGradient(-w / 2, 0, w / 2, 0);
+          ray.addColorStop(0, 'rgba(190,240,255,0)');
+          ray.addColorStop(0.5, 'rgba(190,240,255,' + (0.13 * seaW) + ')');
+          ray.addColorStop(1, 'rgba(190,240,255,0)');
+          ctx.fillStyle = ray;
+          ctx.fillRect(-w / 2, 0, w, H * 0.95);
+          ctx.restore();
+        }
+        // background fish
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        for (const f of seaFish) {
+          f.x += f.dir * f.sp * seaW;
+          if (f.x < -60) { f.x = W + 60; }
+          if (f.x > W + 60) { f.x = -60; }
+          const fy = f.yR * H + Math.sin(frameT * 0.02 + f.ph) * 12;
+          ctx.save();
+          ctx.translate(f.x, fy);
+          if (f.dir > 0) ctx.scale(-1, 1);
+          ctx.globalAlpha = 0.5 * seaW;
+          ctx.font = f.size + 'px sans-serif';
+          ctx.fillText(f.e, 0, 0);
+          ctx.restore();
+        }
+      }
     }
 
     /* ================================================================
        BUBBLES — iridescent soap-film look
        ================================================================ */
+    // surprise passengers: pop their bubble and they escape with a sound
+    const ANIMALS = [
+      { e: '🦆', move: 'flutter', snd: 'quack' },
+      { e: '🐦', move: 'flutter', snd: 'chirp' },
+      { e: '🦋', move: 'flutter', snd: 'chirp' },
+      { e: '🐝', move: 'flutter', snd: 'chirp' },
+      { e: '🐟', move: 'swim',    snd: 'blub'  },
+      { e: '🐠', move: 'swim',    snd: 'blub'  },
+      { e: '🐸', move: 'hop',     snd: 'boing' },
+      { e: '🐰', move: 'hop',     snd: 'boing' }
+    ];
+
     const BUBBLE_HUES = [340, 200, 265, 130, 40, 300, 180, 15, 220, 90];
     let bubbles = [];
     let popFX = [];
@@ -344,6 +541,9 @@
         this.shimmer = Math.random() * 360;
         this.spin = Math.random() * Math.PI * 2;
         this.spinV = (Math.random() - 0.5) * 0.01;
+        this.animal = Math.random() < 0.22
+          ? ANIMALS[Math.floor(Math.random() * ANIMALS.length)]
+          : null;
         this.alive = true;
         this.birth = performance.now();
       }
@@ -371,6 +571,18 @@
         ctx.translate(this.x, this.y);
         ctx.scale(grow / sq, grow * sq);
 
+        // at night the bubbles glow softly
+        if (glowW > 0.02) {
+          const gl = ctx.createRadialGradient(0, 0, r * 0.8, 0, 0, r * 1.45);
+          gl.addColorStop(0, `hsla(${h},90%,72%,0)`);
+          gl.addColorStop(0.55, `hsla(${h},90%,72%,${0.20 * glowW})`);
+          gl.addColorStop(1, `hsla(${h},90%,72%,0)`);
+          ctx.fillStyle = gl;
+          ctx.beginPath();
+          ctx.arc(0, 0, r * 1.45, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
         // thin-film body: near-transparent middle, tinted colored rim
         const body = ctx.createRadialGradient(0, 0, r * 0.35, 0, 0, r);
         body.addColorStop(0,    `hsla(${h},70%,96%,0.05)`);
@@ -393,6 +605,17 @@
           ctx.beginPath();
           ctx.arc(0, 0, r * 0.90, a0, a0 + 1.9);
           ctx.stroke();
+        }
+
+        // surprise animal riding inside, gently bobbing
+        if (this.animal) {
+          const bob = Math.sin(this.phase * 1.6) * r * 0.06;
+          ctx.font = Math.round(r * 0.9) + 'px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.globalAlpha = 0.95;
+          ctx.fillText(this.animal.e, 0, bob + r * 0.03);
+          ctx.globalAlpha = 1;
         }
 
         // crisp outer edge
@@ -458,6 +681,17 @@
           alpha: 1, decay: 0.03 + Math.random() * 0.03
         });
       }
+    }
+
+    function releaseAnimal(b) {
+      const dir = b.x < W / 2 ? 1 : -1;
+      popFX.push({
+        type: 'animal', move: b.animal.move, char: b.animal.e,
+        x: b.x, y: b.y, dir,
+        vx: dir * 1.8, vy: -5, t: 0,
+        angle: 0, rot: (Math.random() - 0.5) * 0.06,
+        size: Math.max(30, Math.round(b.r * 0.9)), alpha: 1
+      });
     }
 
     function spawnConfetti() {
@@ -533,6 +767,37 @@
           ctx.closePath();
           ctx.fill();
           ctx.restore();
+        } else if (p.type === 'animal') {
+          p.t++;
+          if (p.move === 'flutter') {
+            p.y -= 2.0;
+            p.x += Math.sin(p.t * 0.16) * 2.4;
+            p.angle = Math.sin(p.t * 0.16) * 0.22;
+          } else if (p.move === 'swim') {
+            p.x += p.dir * 2.8;
+            p.y += Math.sin(p.t * 0.12) * 1.5;
+            p.angle = Math.sin(p.t * 0.12) * 0.12 * p.dir;
+          } else { // hop
+            p.vy += 0.13;
+            p.x += p.vx;
+            p.y += p.vy;
+            p.angle += p.rot;
+          }
+          if (p.t > 70) p.alpha -= 0.02;
+          if (p.alpha <= 0 || p.y < -90 || p.y > H + 90 || p.x < -90 || p.x > W + 90) {
+            popFX.splice(i, 1); continue;
+          }
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate(p.angle);
+          // emoji animals face left; flip when heading right
+          if (p.move === 'swim' && p.dir > 0) ctx.scale(-1, 1);
+          ctx.globalAlpha = Math.min(1, p.alpha);
+          ctx.font = p.size + 'px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(p.char, 0, 0);
+          ctx.restore();
         } else if (p.type === 'emoji') {
           p.x += p.vx; p.y += p.vy;
           p.vy += 0.08;
@@ -582,8 +847,13 @@
       best.alive = false;
       playPop(best.r);
       spawnPopFX(best.x, best.y, best.r, best.hue);
+      if (best.animal) {
+        releaseAnimal(best);
+        playAnimalSound(best.animal.snd);
+      }
 
       score++;
+      if (score % 30 === 0) advanceWorld();
       scoreEl.textContent = '🫧 ' + score;
       scoreEl.style.transform = 'scale(1.3)';
       setTimeout(() => { scoreEl.style.transform = 'scale(1)'; }, 110);
@@ -607,6 +877,9 @@
     document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
     document.addEventListener('gesturestart', e => e.preventDefault());
     document.addEventListener('dblclick', e => e.preventDefault());
+
+    // test hook: jump straight to a world (0 sky, 1 night, 2 sea)
+    window.__world = i => { worldPrev = worldIdx = i % WORLDS.length; worldFade = 1; };
 
     function frame() {
       drawBackground();
